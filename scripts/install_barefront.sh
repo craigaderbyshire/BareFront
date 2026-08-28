@@ -1,0 +1,3404 @@
+#!/bin/bash
+
+# ============================================================
+# BareFront Installer
+# v0.12
+#
+# Stage 1: Pre-flight checks
+# Stage 2: Common Debian dependencies
+# Stage 3A: Debian/package-managed emulators
+# Stage 2B: Production BareFront directory structure
+# Stage 3B: Locally managed emulators
+# Stage 4: Production launcher adapters + barefront.ini
+# ============================================================
+
+set -Eeuo pipefail
+
+BAREFRONT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LOG_DIR="$BAREFRONT_DIR/logs"
+LOG_FILE="$LOG_DIR/install.log"
+
+mkdir -p "$LOG_DIR"
+
+# Write terminal output and errors to both the screen and log.
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+
+# ============================================================
+# Helper functions
+# ============================================================
+
+heading()
+{
+    echo
+    echo "================================================"
+    echo "$1"
+    echo "================================================"
+    echo
+}
+
+die()
+{
+    echo
+    echo "ERROR: $1"
+    echo
+    echo "See:"
+    echo "  $LOG_FILE"
+    exit 1
+}
+
+package_is_installed()
+{
+    dpkg-query -W -f='${Status}' "$1" 2>/dev/null \
+        | grep -q '^install ok installed$'
+}
+
+install_debian_emulator()
+{
+    local display_name="$1"
+    local package_name="$2"
+    local executable="$3"
+
+    echo
+    echo "------------------------------------------------"
+    echo "$display_name"
+    echo "------------------------------------------------"
+
+    if package_is_installed "$package_name"; then
+        echo "Package '$package_name' is already installed."
+        echo "  Action: SKIP"
+    else
+        echo "Installing Debian package:"
+        echo "  $package_name"
+
+        if sudo apt-get install -y "$package_name"; then
+            echo "Package installation completed."
+        else
+            echo
+            echo "FAILED: Debian could not install '$package_name'."
+            return 1
+        fi
+    fi
+
+    if [[ -x "$executable" ]]; then
+        echo "Executable verified:"
+        echo "  $executable"
+        return 0
+    else
+        echo
+        echo "FAILED: Expected executable was not found:"
+        echo "  $executable"
+        return 1
+    fi
+}
+
+
+# ============================================================
+# Opening screen
+# ============================================================
+
+clear 2>/dev/null || true
+
+echo
+echo "================================================"
+echo "                B A R E F R O N T"
+echo "================================================"
+echo
+echo "BareFront Installer v0.12"
+echo
+echo "BareFront launches."
+echo "Emulators emulate."
+echo "Gamescope presents."
+echo
+
+
+# ============================================================
+# Stage 1 - Pre-flight
+# ============================================================
+
+heading "STAGE 1 / PRE-FLIGHT CHECKS"
+
+if [[ ! -f /etc/os-release ]]; then
+    die "Cannot identify this Linux distribution."
+fi
+
+source /etc/os-release
+
+echo "Operating system:"
+echo "  ${PRETTY_NAME:-Unknown}"
+
+if [[ "${ID:-}" != "debian" ]]; then
+    die "BareFront v1.0 currently supports Debian only."
+fi
+
+if [[ "${VERSION_ID:-}" != "13" ]]; then
+    die "BareFront v1.0 currently supports Debian 13 (Trixie)."
+fi
+
+echo "  Debian 13 check: OK"
+
+ARCH="$(dpkg --print-architecture)"
+
+echo
+echo "Architecture:"
+echo "  $ARCH"
+
+if [[ "$ARCH" != "amd64" ]]; then
+    die "BareFront v1.0 currently supports amd64/x86-64 only."
+fi
+
+echo "  Architecture check: OK"
+
+if [[ "$EUID" -eq 0 ]]; then
+    die "Do not run the whole installer with sudo. Run it as your normal user."
+fi
+
+echo
+echo "User:"
+echo "  $USER"
+echo "  Normal-user check: OK"
+
+echo
+echo "Checking sudo access..."
+
+if ! sudo -v; then
+    die "sudo authentication failed."
+fi
+
+echo "  sudo check: OK"
+
+# ============================================================
+# Stage 2 - Common Debian dependencies
+# ============================================================
+
+heading "STAGE 2 / DEBIAN DEPENDENCIES"
+
+echo "Refreshing Debian package catalogue..."
+echo
+echo "This also acts as our first real network/repository check."
+echo
+
+# We deliberately use apt-get update as the network check.
+# A fresh Debian installation may not have curl or wget yet,
+# but apt-get is guaranteed to be present on our supported target.
+if ! sudo apt-get update; then
+    die "Debian could not refresh its package catalogue. Check the network connection and repository configuration."
+fi
+
+echo
+echo "  Network/repository check: OK"
+
+BASE_PACKAGES=(
+    build-essential
+    pkg-config
+    git
+    curl
+    wget
+    ca-certificates
+    unzip
+    zip
+    p7zip-full
+    xz-utils
+    file
+    rsync
+    jq
+    python3
+)
+
+BAREFRONT_PACKAGES=(
+    libsdl2-dev
+    libsdl2-image-dev
+    libsdl2-ttf-dev
+    libsdl2-mixer-dev
+    ffmpeg
+)
+
+GRAPHICS_PACKAGES=(
+    libgl1-mesa-dev
+    libopengl0
+    libvulkan1
+    mesa-vulkan-drivers
+    vulkan-tools
+    libfuse2t64
+)
+
+ALL_PACKAGES=(
+    "${BASE_PACKAGES[@]}"
+    "${BAREFRONT_PACKAGES[@]}"
+    "${GRAPHICS_PACKAGES[@]}"
+)
+
+echo
+echo "Installing/verifying common dependencies..."
+
+sudo apt-get install -y "${ALL_PACKAGES[@]}"
+
+echo
+echo "Common dependency stage complete."
+
+
+# ============================================================
+# Stage 2B - Production BareFront directory structure
+# ============================================================
+
+heading "STAGE 2B / BAREFRONT DIRECTORIES"
+
+echo "Creating the standard production directory structure."
+echo
+echo "Official game-library path:"
+echo "  $BAREFRONT_DIR/roms"
+echo
+echo "'testroms' is development-only and is NOT used by the"
+echo "production installer."
+echo
+
+SYSTEM_KEYS=(
+    megadrive
+    nes
+    snes
+    ps1
+    ps2
+    mastersystem
+    atari2600
+    c64
+    arcade
+    neogeo
+    dreamcast
+    saturn
+    pcengine
+    jaguar
+    gamecube
+    amiga
+)
+
+# mkdir -p:
+#   mkdir = make directory
+#   -p    = also make missing parent directories and do not
+#           complain if the directory already exists.
+mkdir -p \
+    "$BAREFRONT_DIR/emulators" \
+    "$BAREFRONT_DIR/logs"
+
+for system in "${SYSTEM_KEYS[@]}"; do
+    mkdir -p \
+        "$BAREFRONT_DIR/roms/$system" \
+        "$BAREFRONT_DIR/bios/$system" \
+        "$BAREFRONT_DIR/saves/$system" \
+        "$BAREFRONT_DIR/assets/games/$system" \
+        "$BAREFRONT_DIR/assets/videos/$system"
+done
+
+echo "Created/verified:"
+echo "  roms/<system>/"
+echo "  bios/<system>/"
+echo "  saves/<system>/"
+echo "  assets/games/<system>/"
+echo "  assets/videos/<system>/"
+echo
+echo "Directory stage complete."
+
+
+# ============================================================
+# Stage 3A - Debian-managed emulators
+# ============================================================
+
+heading "STAGE 3A / DEBIAN EMULATORS"
+
+echo "These emulators come directly from Debian 13 packages."
+echo
+echo "For each emulator BareFront will:"
+echo "  1. check whether its Debian package is already installed"
+echo "  2. install it only if necessary"
+echo "  3. verify the executable exists"
+echo
+
+SUCCESS_COUNT=0
+FAILED_COUNT=0
+SKIPPED_SPECIAL=0
+
+
+# ------------------------------------------------------------
+# BlastEm - Mega Drive
+# Debian package: blastem
+# Expected Debian 13 executable: /usr/games/blastem
+# ------------------------------------------------------------
+
+if install_debian_emulator \
+    "Mega Drive / BlastEm" \
+    "blastem" \
+    "/usr/games/blastem"
+then
+    ((SUCCESS_COUNT+=1))
+else
+    ((FAILED_COUNT+=1))
+fi
+
+
+# ------------------------------------------------------------
+# Stella - Atari 2600
+# ------------------------------------------------------------
+
+if install_debian_emulator \
+    "Atari 2600 / Stella" \
+    "stella" \
+    "/usr/bin/stella"
+then
+    ((SUCCESS_COUNT+=1))
+else
+    ((FAILED_COUNT+=1))
+fi
+
+
+# ------------------------------------------------------------
+# Mednafen - Saturn + PC Engine
+# One emulator package services two BareFront systems.
+# ------------------------------------------------------------
+
+if install_debian_emulator \
+    "Saturn + PC Engine / Mednafen" \
+    "mednafen" \
+    "/usr/games/mednafen"
+then
+    ((SUCCESS_COUNT+=1))
+else
+    ((FAILED_COUNT+=1))
+fi
+
+
+# ------------------------------------------------------------
+# MAME - Arcade + Neo Geo
+# One emulator package services two BareFront systems.
+# ------------------------------------------------------------
+
+if install_debian_emulator \
+    "Arcade + Neo Geo / MAME" \
+    "mame" \
+    "/usr/games/mame"
+then
+    ((SUCCESS_COUNT+=1))
+else
+    ((FAILED_COUNT+=1))
+fi
+
+
+# ------------------------------------------------------------
+# Dolphin - GameCube
+# ------------------------------------------------------------
+
+if install_debian_emulator \
+    "GameCube / Dolphin" \
+    "dolphin-emu" \
+    "/usr/games/dolphin-emu"
+then
+    ((SUCCESS_COUNT+=1))
+else
+    ((FAILED_COUNT+=1))
+fi
+
+
+# ============================================================
+# VICE special case
+#
+# Debian 13 places VICE in the "contrib" component.
+#
+# Rather than modifying the user's existing Debian repository
+# file, BareFront can create its own small supplemental source:
+#
+#   /etc/apt/sources.list.d/barefront-contrib.sources
+#
+# This is easy to identify and easy to reverse later.
+# ============================================================
+
+enable_barefront_contrib()
+{
+    local source_file="/etc/apt/sources.list.d/barefront-contrib.sources"
+
+    echo
+    echo "VICE needs Debian's 'contrib' repository component."
+    echo
+    echo "BareFront can enable contrib by creating:"
+    echo "  $source_file"
+    echo
+    echo "Your existing Debian source files will NOT be edited."
+    echo
+    echo "To reverse this later you can remove that one file and run:"
+    echo "  sudo apt-get update"
+    echo
+
+    read -r -p "Enable Debian contrib for BareFront? [Y/n] " reply
+    reply="${reply:-Y}"
+
+    if [[ ! "$reply" =~ ^[Yy]$ ]]; then
+        echo "User chose not to enable contrib."
+        return 1
+    fi
+
+    # tee reads text from standard input and writes it to a file.
+    # sudo is attached to tee because /etc/apt belongs to root.
+    sudo tee "$source_file" >/dev/null <<'EOF'
+Types: deb
+URIs: https://deb.debian.org/debian
+Suites: trixie trixie-updates
+Components: contrib
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+Types: deb
+URIs: https://security.debian.org/debian-security
+Suites: trixie-security
+Components: contrib
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF
+
+    echo
+    echo "Created:"
+    echo "  $source_file"
+    echo
+    echo "Refreshing APT after enabling contrib..."
+
+    if ! sudo apt-get update; then
+        echo "APT update failed after enabling contrib."
+        return 1
+    fi
+
+    return 0
+}
+
+
+echo
+echo "------------------------------------------------"
+echo "Commodore 64 / VICE"
+echo "------------------------------------------------"
+
+if package_is_installed "vice"; then
+
+    echo "VICE is already installed."
+    echo "  Action: SKIP"
+
+    if [[ -x /usr/bin/x64sc ]]; then
+        echo "Executable verified:"
+        echo "  /usr/bin/x64sc"
+        ((SUCCESS_COUNT+=1))
+    else
+        echo "FAILED: VICE package exists but /usr/bin/x64sc is missing."
+        ((FAILED_COUNT+=1))
+    fi
+
+else
+
+    # apt-cache policy asks APT which version it would install.
+    # Candidate: (none) means none of the configured repositories
+    # currently provides the package.
+    VICE_CANDIDATE="$(
+        apt-cache policy vice 2>/dev/null \
+        | awk '/Candidate:/ {print $2}'
+    )"
+
+    if [[ -z "$VICE_CANDIDATE" || "$VICE_CANDIDATE" == "(none)" ]]; then
+
+        echo "VICE is not currently visible to APT."
+
+        if enable_barefront_contrib; then
+
+            # Ask APT again now that contrib has been added.
+            VICE_CANDIDATE="$(
+                apt-cache policy vice 2>/dev/null \
+                | awk '/Candidate:/ {print $2}'
+            )"
+
+        else
+            VICE_CANDIDATE="(none)"
+        fi
+    fi
+
+    if [[ -n "$VICE_CANDIDATE" && "$VICE_CANDIDATE" != "(none)" ]]; then
+
+        echo
+        echo "VICE is available."
+        echo "Candidate version:"
+        echo "  $VICE_CANDIDATE"
+
+        if sudo apt-get install -y vice; then
+
+            if [[ -x /usr/bin/x64sc ]]; then
+                echo "VICE installed and verified:"
+                echo "  /usr/bin/x64sc"
+                ((SUCCESS_COUNT+=1))
+            else
+                echo "FAILED: VICE installed but x64sc was not found."
+                ((FAILED_COUNT+=1))
+            fi
+
+        else
+            echo "FAILED: APT could see VICE but installation failed."
+            ((FAILED_COUNT+=1))
+        fi
+
+    else
+        echo
+        echo "VICE was not installed."
+        echo "BareFront can continue, but Commodore 64 support"
+        echo "will remain incomplete until contrib/VICE is available."
+        ((SKIPPED_SPECIAL+=1))
+    fi
+fi
+
+
+# ============================================================
+# Stage 3A summary
+# ============================================================
+
+heading "STAGE 3A SUMMARY"
+
+echo "Debian emulator packages:"
+echo
+echo "  Successful / verified : $SUCCESS_COUNT"
+echo "  Failed                : $FAILED_COUNT"
+echo "  Deferred special case : $SKIPPED_SPECIAL"
+echo
+
+echo "Expected executable paths:"
+echo
+echo "  BlastEm   /usr/games/blastem"
+echo "  Stella    /usr/bin/stella"
+echo "  Mednafen  /usr/games/mednafen"
+echo "  MAME      /usr/games/mame"
+echo "  VICE      /usr/bin/x64sc"
+echo "  Dolphin   /usr/games/dolphin-emu"
+echo
+
+if [[ "$FAILED_COUNT" -gt 0 ]]; then
+    echo "One or more package-managed emulator installs failed."
+    echo "Review:"
+    echo "  $LOG_FILE"
+    exit 1
+fi
+
+if [[ "$SKIPPED_SPECIAL" -gt 0 ]]; then
+    echo "Stage 3A completed with one expected special case."
+    echo "VICE remains incomplete because contrib was not enabled or available."
+else
+    echo "Stage 3A completed successfully."
+fi
+
+echo
+echo "Nothing in Stage 3A installs ROMs or copyrighted BIOS files."
+echo
+
+
+# ============================================================
+# Stage 3B - Locally managed emulators
+# Part 1: Mesen Community Edition
+# ============================================================
+
+heading "STAGE 3B / MESEN"
+
+MESEN_DIR="$BAREFRONT_DIR/emulators/mesen"
+MESEN_EXE="$MESEN_DIR/Mesen"
+MESEN_API="https://api.github.com/repos/nesdev-org/MesenCE/releases/latest"
+
+echo "BareFront uses Mesen for:"
+echo "  NES"
+echo "  Master System"
+echo
+echo "Install location:"
+echo "  $MESEN_DIR"
+echo
+
+if [[ -x "$MESEN_EXE" ]]; then
+
+    echo "Mesen is already installed."
+    echo "Executable:"
+    echo "  $MESEN_EXE"
+    echo "Action: SKIP"
+
+else
+
+    mkdir -p "$MESEN_DIR"
+
+    echo "Asking GitHub for the latest stable MesenCE release..."
+    echo
+
+    # curl:
+    #   -f = fail if the web server returns an HTTP error
+    #   -s = silent progress meter
+    #   -S = still show an error if something fails
+    #   -L = follow redirects
+    #
+    # The GitHub /releases/latest endpoint returns the newest
+    # normal release, not a nightly development build.
+    if ! MESEN_RELEASE_JSON="$(curl -fsSL "$MESEN_API")"; then
+        die "Could not retrieve the latest stable MesenCE release information."
+    fi
+
+    MESEN_VERSION="$(
+        printf '%s' "$MESEN_RELEASE_JSON" \
+        | jq -r '.tag_name // empty'
+    )"
+
+    if [[ -z "$MESEN_VERSION" ]]; then
+        die "GitHub did not return a MesenCE release version."
+    fi
+
+    echo "Latest stable release:"
+    echo "  $MESEN_VERSION"
+    echo
+
+    # Prefer a native Linux x64 release asset.
+    #
+    # We explicitly reject:
+    #   ARM builds
+    #   Windows builds
+    #   macOS builds
+    #   development/nightly artifacts
+    #
+    # If no suitable native asset is found, an official stable
+    # x64 AppImage is accepted as the fallback.
+    MESEN_ASSET_JSON="$(
+        printf '%s' "$MESEN_RELEASE_JSON" \
+        | jq -c '
+            [
+              .assets[]
+              | select(.name | test("linux"; "i"))
+              | select(.name | test("x64|x86_64"; "i"))
+              | select((.name | test("arm"; "i")) | not)
+              | select((.name | test("appimage"; "i")) | not)
+            ][0] // empty
+          '
+    )"
+
+    if [[ -z "$MESEN_ASSET_JSON" ]]; then
+        echo "No native x64 asset was found."
+        echo "Looking for the official stable x64 AppImage instead..."
+
+        MESEN_ASSET_JSON="$(
+            printf '%s' "$MESEN_RELEASE_JSON" \
+            | jq -c '
+                [
+                  .assets[]
+                  | select(.name | test("linux"; "i"))
+                  | select(.name | test("x64|x86_64"; "i"))
+                  | select(.name | test("appimage"; "i"))
+                  | select((.name | test("arm"; "i")) | not)
+                ][0] // empty
+              '
+        )"
+    fi
+
+    if [[ -z "$MESEN_ASSET_JSON" ]]; then
+        echo
+        echo "GitHub release assets returned:"
+        printf '%s' "$MESEN_RELEASE_JSON" \
+            | jq -r '.assets[]?.name' \
+            | sed 's/^/  /'
+        die "Could not identify a suitable stable MesenCE Linux x64 download."
+    fi
+
+    MESEN_ASSET_NAME="$(
+        printf '%s' "$MESEN_ASSET_JSON" \
+        | jq -r '.name'
+    )"
+
+    MESEN_DOWNLOAD_URL="$(
+        printf '%s' "$MESEN_ASSET_JSON" \
+        | jq -r '.browser_download_url'
+    )"
+
+    MESEN_DIGEST="$(
+        printf '%s' "$MESEN_ASSET_JSON" \
+        | jq -r '.digest // empty'
+    )"
+
+    echo
+    echo "Selected release asset:"
+    echo "  $MESEN_ASSET_NAME"
+
+    TEMP_DIR="$(mktemp -d)"
+    TEMP_DOWNLOAD="$TEMP_DIR/mesen-download"
+
+    echo
+    echo "Downloading..."
+
+    if ! curl -fL --progress-bar \
+        "$MESEN_DOWNLOAD_URL" \
+        -o "$TEMP_DOWNLOAD"
+    then
+        rm -rf "$TEMP_DIR"
+        die "MesenCE download failed."
+    fi
+
+    # --------------------------------------------------------
+    # Verify SHA-256 when GitHub publishes one for the asset.
+    # --------------------------------------------------------
+
+    if [[ "$MESEN_DIGEST" == sha256:* ]]; then
+
+        EXPECTED_SHA256="${MESEN_DIGEST#sha256:}"
+        ACTUAL_SHA256="$(sha256sum "$TEMP_DOWNLOAD" | awk '{print $1}')"
+
+        echo
+        echo "Checking download SHA-256..."
+
+        if [[ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]]; then
+            rm -rf "$TEMP_DIR"
+            die "MesenCE SHA-256 verification failed."
+        fi
+
+        echo "  SHA-256: OK"
+
+    else
+
+        echo
+        echo "GitHub did not publish an asset SHA-256 digest."
+        echo "Download came directly from the official MesenCE release."
+    fi
+
+    # --------------------------------------------------------
+    # Work out what kind of file GitHub gave us.
+    #
+    # `file` examines the CONTENTS of a file rather than trusting
+    # its filename extension.
+    # --------------------------------------------------------
+
+    DOWNLOAD_TYPE="$(file -b "$TEMP_DOWNLOAD")"
+
+    echo
+    echo "Downloaded file type:"
+    echo "  $DOWNLOAD_TYPE"
+
+    EXTRACT_DIR="$TEMP_DIR/extracted"
+    mkdir -p "$EXTRACT_DIR"
+
+    if grep -qi "Zip archive" <<< "$DOWNLOAD_TYPE"; then
+
+        echo "Extracting ZIP archive..."
+        unzip -q "$TEMP_DOWNLOAD" -d "$EXTRACT_DIR"
+
+        FOUND_MESEN="$(
+            find "$EXTRACT_DIR" \
+                -type f \
+                -name 'Mesen' \
+                -print \
+                -quit
+        )"
+
+        if [[ -z "$FOUND_MESEN" ]]; then
+            rm -rf "$TEMP_DIR"
+            die "Mesen executable was not found inside the downloaded ZIP."
+        fi
+
+        cp "$FOUND_MESEN" "$MESEN_EXE"
+
+    elif grep -qiE "ELF .* executable|AppImage|executable" <<< "$DOWNLOAD_TYPE"; then
+
+        echo "Downloaded asset is directly executable."
+        cp "$TEMP_DOWNLOAD" "$MESEN_EXE"
+
+    else
+
+        echo
+        echo "Unexpected download format:"
+        echo "  $DOWNLOAD_TYPE"
+        rm -rf "$TEMP_DIR"
+        die "BareFront does not yet know how to unpack this MesenCE release asset."
+    fi
+
+    chmod +x "$MESEN_EXE"
+
+    # Keep a small human-readable record of what BareFront installed.
+    cat > "$MESEN_DIR/VERSION.txt" <<EOF
+BareFront managed emulator
+Emulator: Mesen Community Edition
+Release: $MESEN_VERSION
+Source: https://github.com/nesdev-org/MesenCE
+Asset: $MESEN_ASSET_NAME
+EOF
+
+    rm -rf "$TEMP_DIR"
+
+    echo
+    echo "Mesen installed."
+fi
+
+
+# ------------------------------------------------------------
+# Final Mesen verification
+# ------------------------------------------------------------
+
+echo
+echo "Verifying Mesen..."
+
+if [[ -x "$MESEN_EXE" ]]; then
+    echo "  Executable: OK"
+    echo "  $MESEN_EXE"
+else
+    die "Mesen installation verification failed."
+fi
+
+if [[ -f "$MESEN_DIR/VERSION.txt" ]]; then
+    echo
+    echo "BareFront install record:"
+    sed 's/^/  /' "$MESEN_DIR/VERSION.txt"
+fi
+
+echo
+echo "Mesen stage complete."
+
+
+# ============================================================
+# Stage 3B - Locally managed emulators
+# Part 2: DuckStation
+# ============================================================
+
+heading "STAGE 3B / DUCKSTATION"
+
+DUCKSTATION_DIR="$BAREFRONT_DIR/emulators/duckstation"
+DUCKSTATION_EXE="$DUCKSTATION_DIR/DuckStation.AppImage"
+
+# DuckStation's official stable update channel is the GitHub tag
+# named "latest". The "preview" tag is the development/pre-release
+# channel and is deliberately NOT used by BareFront.
+DUCKSTATION_API="https://api.github.com/repos/stenzek/duckstation/releases/tags/latest"
+DUCKSTATION_ASSET_NAME="DuckStation-x64.AppImage"
+
+echo "BareFront uses DuckStation for:"
+echo "  PlayStation"
+echo
+echo "Install location:"
+echo "  $DUCKSTATION_DIR"
+echo
+
+mkdir -p "$DUCKSTATION_DIR"
+
+if [[ -x "$DUCKSTATION_EXE" ]]; then
+
+    echo "DuckStation is already installed."
+    echo "Executable:"
+    echo "  $DUCKSTATION_EXE"
+    echo "Action: SKIP"
+
+else
+
+    echo "Asking GitHub for DuckStation's official stable release..."
+    echo
+
+    if ! DUCK_RELEASE_JSON="$(curl -fsSL "$DUCKSTATION_API")"; then
+        die "Could not retrieve DuckStation stable release information."
+    fi
+
+    DUCK_RELEASE_NAME="$(
+        printf '%s' "$DUCK_RELEASE_JSON" \
+        | jq -r '.name // .tag_name // "Unknown"'
+    )"
+
+    DUCK_PUBLISHED="$(
+        printf '%s' "$DUCK_RELEASE_JSON" \
+        | jq -r '.published_at // "Unknown"'
+    )"
+
+    DUCK_ASSET_JSON="$(
+        printf '%s' "$DUCK_RELEASE_JSON" \
+        | jq -c --arg name "$DUCKSTATION_ASSET_NAME" '
+            .assets[]
+            | select(.name == $name)
+          ' \
+        | head -n 1
+    )"
+
+    if [[ -z "$DUCK_ASSET_JSON" ]]; then
+        echo "Release assets returned by GitHub:"
+        printf '%s' "$DUCK_RELEASE_JSON" \
+            | jq -r '.assets[]?.name' \
+            | sed 's/^/  /'
+        die "Official DuckStation x64 AppImage was not found."
+    fi
+
+    DUCK_DOWNLOAD_URL="$(
+        printf '%s' "$DUCK_ASSET_JSON" \
+        | jq -r '.browser_download_url'
+    )"
+
+    DUCK_DIGEST="$(
+        printf '%s' "$DUCK_ASSET_JSON" \
+        | jq -r '.digest // empty'
+    )"
+
+    echo "Release:"
+    echo "  $DUCK_RELEASE_NAME"
+    echo "Published:"
+    echo "  $DUCK_PUBLISHED"
+    echo "Asset:"
+    echo "  $DUCKSTATION_ASSET_NAME"
+    echo
+
+    TEMP_DIR="$(mktemp -d)"
+    TEMP_DOWNLOAD="$TEMP_DIR/DuckStation.AppImage"
+
+    echo "Downloading official x64 AppImage..."
+
+    if ! curl -fL --progress-bar \
+        "$DUCK_DOWNLOAD_URL" \
+        -o "$TEMP_DOWNLOAD"
+    then
+        rm -rf "$TEMP_DIR"
+        die "DuckStation download failed."
+    fi
+
+    # Modern GitHub release assets may provide a SHA-256 digest
+    # through the release API. Verify it when available.
+    if [[ "$DUCK_DIGEST" == sha256:* ]]; then
+
+        EXPECTED_SHA256="${DUCK_DIGEST#sha256:}"
+        ACTUAL_SHA256="$(sha256sum "$TEMP_DOWNLOAD" | awk '{print $1}')"
+
+        echo
+        echo "Checking DuckStation SHA-256..."
+
+        if [[ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]]; then
+            rm -rf "$TEMP_DIR"
+            die "DuckStation SHA-256 verification failed."
+        fi
+
+        echo "  SHA-256: OK"
+
+    else
+
+        echo
+        echo "No release-asset SHA-256 was supplied by GitHub."
+        echo "The AppImage was downloaded directly from the official"
+        echo "DuckStation GitHub release."
+
+    fi
+
+    # `file` inspects the contents rather than trusting the filename.
+    DOWNLOAD_TYPE="$(file -b "$TEMP_DOWNLOAD")"
+
+    echo
+    echo "Downloaded file type:"
+    echo "  $DOWNLOAD_TYPE"
+
+    if ! grep -qiE 'ELF|AppImage|executable' <<< "$DOWNLOAD_TYPE"; then
+        rm -rf "$TEMP_DIR"
+        die "Downloaded DuckStation file does not look executable."
+    fi
+
+    cp "$TEMP_DOWNLOAD" "$DUCKSTATION_EXE"
+
+    # Linux downloaded files are not automatically executable.
+    chmod +x "$DUCKSTATION_EXE"
+
+    rm -rf "$TEMP_DIR"
+
+    echo
+    echo "DuckStation AppImage installed."
+fi
+
+
+# ------------------------------------------------------------
+# DuckStation portable user-data mode
+#
+# DuckStation officially supports an empty file named portable.txt
+# beside the executable. This makes its user-data directory the
+# same directory as the AppImage rather than ~/.local/share.
+#
+# This keeps the BareFront appliance self-contained and predictable.
+# ------------------------------------------------------------
+
+touch "$DUCKSTATION_DIR/portable.txt"
+
+echo
+echo "DuckStation portable mode:"
+echo "  ENABLED"
+
+# DuckStation expects BIOS images inside <user directory>/bios.
+# BareFront's official firmware location is bios/ps1/.
+#
+# A symbolic link lets both conventions refer to the same folder.
+#
+# ln -s = create symbolic link (a filesystem pointer/shortcut).
+DUCK_BIOS_LINK="$DUCKSTATION_DIR/bios"
+BAREFRONT_PS1_BIOS="$BAREFRONT_DIR/bios/ps1"
+
+if [[ -L "$DUCK_BIOS_LINK" ]]; then
+
+    CURRENT_TARGET="$(readlink "$DUCK_BIOS_LINK")"
+
+    if [[ "$CURRENT_TARGET" != "$BAREFRONT_PS1_BIOS" ]]; then
+        echo
+        echo "WARNING: Existing DuckStation BIOS symbolic link points to:"
+        echo "  $CURRENT_TARGET"
+        echo "Expected:"
+        echo "  $BAREFRONT_PS1_BIOS"
+        echo "Leaving the existing link untouched."
+    fi
+
+elif [[ -e "$DUCK_BIOS_LINK" ]]; then
+
+    echo
+    echo "WARNING: DuckStation already has a real 'bios' directory."
+    echo "BareFront will not overwrite it."
+    echo "Expected BareFront BIOS directory:"
+    echo "  $BAREFRONT_PS1_BIOS"
+
+else
+
+    ln -s "$BAREFRONT_PS1_BIOS" "$DUCK_BIOS_LINK"
+
+    echo
+    echo "Created DuckStation BIOS link:"
+    echo "  $DUCK_BIOS_LINK"
+    echo "       -> $BAREFRONT_PS1_BIOS"
+
+fi
+
+
+# ------------------------------------------------------------
+# Record what BareFront installed
+# ------------------------------------------------------------
+
+if [[ ! -f "$DUCKSTATION_DIR/VERSION.txt" ]]; then
+    cat > "$DUCKSTATION_DIR/VERSION.txt" <<EOF
+BareFront managed emulator
+Emulator: DuckStation
+Channel: Stable (GitHub tag: latest)
+Source: https://github.com/stenzek/duckstation
+Asset: $DUCKSTATION_ASSET_NAME
+EOF
+fi
+
+
+# ------------------------------------------------------------
+# Final DuckStation verification
+# ------------------------------------------------------------
+
+echo
+echo "Verifying DuckStation..."
+
+if [[ -x "$DUCKSTATION_EXE" ]]; then
+    echo "  Executable: OK"
+    echo "  $DUCKSTATION_EXE"
+else
+    die "DuckStation installation verification failed."
+fi
+
+if [[ -f "$DUCKSTATION_DIR/portable.txt" ]]; then
+    echo "  Portable mode marker: OK"
+else
+    die "DuckStation portable mode marker is missing."
+fi
+
+echo
+echo "DuckStation stage complete."
+
+
+# ============================================================
+# Stage 3B - Locally managed emulators
+# Part 3: PCSX2
+# ============================================================
+
+heading "STAGE 3B / PCSX2"
+
+PCSX2_DIR="$BAREFRONT_DIR/emulators/pcsx2"
+PCSX2_EXE="$PCSX2_DIR/PCSX2.AppImage"
+PCSX2_API="https://api.github.com/repos/PCSX2/pcsx2/releases/latest"
+
+echo "BareFront uses PCSX2 for:"
+echo "  PlayStation 2"
+echo
+echo "Install location:"
+echo "  $PCSX2_DIR"
+echo
+
+mkdir -p "$PCSX2_DIR"
+
+if [[ -x "$PCSX2_EXE" ]]; then
+
+    echo "PCSX2 is already installed."
+    echo "Executable:"
+    echo "  $PCSX2_EXE"
+    echo "Action: SKIP"
+
+else
+
+    echo "Asking GitHub for the latest stable PCSX2 release..."
+    echo
+
+    # GitHub's /releases/latest endpoint returns the most recent
+    # normal release and excludes prereleases/nightlies.
+    if ! PCSX2_RELEASE_JSON="$(curl -fsSL "$PCSX2_API")"; then
+        die "Could not retrieve PCSX2 stable release information."
+    fi
+
+    PCSX2_VERSION="$(
+        printf '%s' "$PCSX2_RELEASE_JSON" \
+        | jq -r '.tag_name // empty'
+    )"
+
+    if [[ -z "$PCSX2_VERSION" ]]; then
+        die "GitHub did not return a stable PCSX2 release version."
+    fi
+
+    echo "Latest stable release:"
+    echo "  $PCSX2_VERSION"
+    echo
+
+    # Select the official Linux x64 Qt AppImage.
+    PCSX2_ASSET_JSON="$(
+        printf '%s' "$PCSX2_RELEASE_JSON" \
+        | jq -c '
+            [
+              .assets[]
+              | select(.name | test("linux"; "i"))
+              | select(.name | test("appimage"; "i"))
+              | select(.name | test("x64|x86_64"; "i"))
+              | select(.name | test("Qt"; "i"))
+              | select((.name | test("arm"; "i")) | not)
+            ][0] // empty
+          '
+    )"
+
+    if [[ -z "$PCSX2_ASSET_JSON" ]]; then
+        echo "Release assets returned by GitHub:"
+        printf '%s' "$PCSX2_RELEASE_JSON" \
+            | jq -r '.assets[]?.name' \
+            | sed 's/^/  /'
+        die "Could not identify the official PCSX2 Linux x64 Qt AppImage."
+    fi
+
+    PCSX2_ASSET_NAME="$(
+        printf '%s' "$PCSX2_ASSET_JSON" \
+        | jq -r '.name'
+    )"
+
+    PCSX2_DOWNLOAD_URL="$(
+        printf '%s' "$PCSX2_ASSET_JSON" \
+        | jq -r '.browser_download_url'
+    )"
+
+    PCSX2_DIGEST="$(
+        printf '%s' "$PCSX2_ASSET_JSON" \
+        | jq -r '.digest // empty'
+    )"
+
+    echo "Selected asset:"
+    echo "  $PCSX2_ASSET_NAME"
+    echo
+
+    TEMP_DIR="$(mktemp -d)"
+    TEMP_DOWNLOAD="$TEMP_DIR/PCSX2.AppImage"
+
+    echo "Downloading official stable AppImage..."
+
+    if ! curl -fL --progress-bar \
+        "$PCSX2_DOWNLOAD_URL" \
+        -o "$TEMP_DOWNLOAD"
+    then
+        rm -rf "$TEMP_DIR"
+        die "PCSX2 download failed."
+    fi
+
+    # Verify the GitHub-published SHA-256 digest when available.
+    if [[ "$PCSX2_DIGEST" == sha256:* ]]; then
+
+        EXPECTED_SHA256="${PCSX2_DIGEST#sha256:}"
+        ACTUAL_SHA256="$(sha256sum "$TEMP_DOWNLOAD" | awk '{print $1}')"
+
+        echo
+        echo "Checking PCSX2 SHA-256..."
+
+        if [[ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]]; then
+            rm -rf "$TEMP_DIR"
+            die "PCSX2 SHA-256 verification failed."
+        fi
+
+        echo "  SHA-256: OK"
+
+    else
+
+        echo
+        echo "No release-asset SHA-256 was supplied by GitHub."
+        echo "The AppImage was downloaded directly from the official"
+        echo "PCSX2 GitHub release."
+
+    fi
+
+    DOWNLOAD_TYPE="$(file -b "$TEMP_DOWNLOAD")"
+
+    echo
+    echo "Downloaded file type:"
+    echo "  $DOWNLOAD_TYPE"
+
+    if ! grep -qiE 'ELF|AppImage|executable' <<< "$DOWNLOAD_TYPE"; then
+        rm -rf "$TEMP_DIR"
+        die "Downloaded PCSX2 file does not look executable."
+    fi
+
+    cp "$TEMP_DOWNLOAD" "$PCSX2_EXE"
+    chmod +x "$PCSX2_EXE"
+
+    cat > "$PCSX2_DIR/VERSION.txt" <<EOF
+BareFront managed emulator
+Emulator: PCSX2
+Release: $PCSX2_VERSION
+Source: https://github.com/PCSX2/pcsx2
+Asset: $PCSX2_ASSET_NAME
+EOF
+
+    rm -rf "$TEMP_DIR"
+
+    echo
+    echo "PCSX2 AppImage installed."
+fi
+
+
+# ------------------------------------------------------------
+# PCSX2 portable mode
+# ------------------------------------------------------------
+
+# PCSX2 officially supports portable.txt or portable.ini beside
+# the executable. In portable mode its data root becomes this
+# directory instead of ~/.config/PCSX2.
+touch "$PCSX2_DIR/portable.txt"
+
+echo
+echo "PCSX2 portable mode:"
+echo "  ENABLED"
+
+
+# ------------------------------------------------------------
+# BareFront-owned PS2 BIOS and save folders
+# ------------------------------------------------------------
+
+mkdir -p \
+    "$BAREFRONT_DIR/bios/ps2" \
+    "$BAREFRONT_DIR/saves/ps2/memcards" \
+    "$BAREFRONT_DIR/saves/ps2/sstates"
+
+
+ensure_symlink()
+{
+    local target="$1"
+    local link_path="$2"
+    local description="$3"
+
+    if [[ -L "$link_path" ]]; then
+
+        local current_target
+        current_target="$(readlink "$link_path")"
+
+        if [[ "$current_target" == "$target" ]]; then
+            echo "  $description: OK"
+        else
+            echo
+            echo "WARNING: Existing symbolic link:"
+            echo "  $link_path"
+            echo "currently points to:"
+            echo "  $current_target"
+            echo "Expected:"
+            echo "  $target"
+            echo "Leaving it untouched."
+        fi
+
+    elif [[ -e "$link_path" ]]; then
+
+        echo
+        echo "WARNING: A real file/directory already exists at:"
+        echo "  $link_path"
+        echo "BareFront will not overwrite it."
+
+    else
+
+        ln -s "$target" "$link_path"
+
+        echo "  $description: linked"
+        echo "    $link_path"
+        echo "      -> $target"
+
+    fi
+}
+
+
+echo
+echo "Connecting PCSX2 data folders to BareFront..."
+
+ensure_symlink \
+    "$BAREFRONT_DIR/bios/ps2" \
+    "$PCSX2_DIR/bios" \
+    "BIOS"
+
+ensure_symlink \
+    "$BAREFRONT_DIR/saves/ps2/memcards" \
+    "$PCSX2_DIR/memcards" \
+    "Memory cards"
+
+ensure_symlink \
+    "$BAREFRONT_DIR/saves/ps2/sstates" \
+    "$PCSX2_DIR/sstates" \
+    "Save states"
+
+
+# ------------------------------------------------------------
+# Final PCSX2 verification
+# ------------------------------------------------------------
+
+echo
+echo "Verifying PCSX2..."
+
+if [[ -x "$PCSX2_EXE" ]]; then
+    echo "  Executable: OK"
+    echo "  $PCSX2_EXE"
+else
+    die "PCSX2 installation verification failed."
+fi
+
+if [[ -f "$PCSX2_DIR/portable.txt" ]]; then
+    echo "  Portable mode marker: OK"
+else
+    die "PCSX2 portable mode marker is missing."
+fi
+
+echo
+echo "BareFront launch command will later use:"
+echo "  -batch -slowboot {rom}"
+echo
+echo "-batch makes PCSX2 exit when emulation ends."
+echo "-slowboot preserves the normal PS2 BIOS/startup sequence."
+echo
+echo "PCSX2 still requires a BIOS dumped from a legitimately"
+echo "owned PlayStation 2. BareFront does not supply that file."
+echo
+echo "PCSX2 stage complete."
+
+
+# ============================================================
+# Stage 3B - Locally managed emulators
+# Part 4: Flycast
+# ============================================================
+
+heading "STAGE 3B / FLYCAST"
+
+FLYCAST_DIR="$BAREFRONT_DIR/emulators/flycast"
+FLYCAST_EXE="$FLYCAST_DIR/Flycast.AppImage"
+FLYCAST_DATA_DIR="$FLYCAST_DIR/data"
+FLYCAST_API="https://api.github.com/repos/flyinghead/flycast/releases/latest"
+
+echo "BareFront uses Flycast for:"
+echo "  Dreamcast"
+echo
+echo "Install location:"
+echo "  $FLYCAST_DIR"
+echo
+
+mkdir -p \
+    "$FLYCAST_DIR" \
+    "$FLYCAST_DATA_DIR" \
+    "$BAREFRONT_DIR/bios/dreamcast" \
+    "$BAREFRONT_DIR/saves/dreamcast"
+
+
+if [[ -x "$FLYCAST_EXE" ]]; then
+
+    echo "Flycast is already installed."
+    echo "Executable:"
+    echo "  $FLYCAST_EXE"
+    echo "Action: SKIP"
+
+else
+
+    echo "Asking GitHub for the latest stable Flycast release..."
+    echo
+
+    # /releases/latest returns the newest normal tagged release,
+    # not nightly/master development builds.
+    if ! FLYCAST_RELEASE_JSON="$(curl -fsSL "$FLYCAST_API")"; then
+        die "Could not retrieve Flycast stable release information."
+    fi
+
+    FLYCAST_VERSION="$(
+        printf '%s' "$FLYCAST_RELEASE_JSON" \
+        | jq -r '.tag_name // empty'
+    )"
+
+    if [[ -z "$FLYCAST_VERSION" ]]; then
+        die "GitHub did not return a Flycast stable release version."
+    fi
+
+    echo "Latest stable release:"
+    echo "  $FLYCAST_VERSION"
+    echo
+
+    # Pick the official Linux x86-64 AppImage.
+    #
+    # Asset names have changed slightly between releases, so we
+    # select by characteristics rather than hard-coding the exact
+    # filename forever.
+    FLYCAST_ASSET_JSON="$(
+        printf '%s' "$FLYCAST_RELEASE_JSON" \
+        | jq -c '
+            [
+              .assets[]
+              | select(.name | test("appimage"; "i"))
+              | select(.name | test("x86_64|x64"; "i"))
+              | select((.name | test("arm|aarch64"; "i")) | not)
+            ][0] // empty
+          '
+    )"
+
+    if [[ -z "$FLYCAST_ASSET_JSON" ]]; then
+        echo "Release assets returned by GitHub:"
+        printf '%s' "$FLYCAST_RELEASE_JSON" \
+            | jq -r '.assets[]?.name' \
+            | sed 's/^/  /'
+        die "Could not identify the official Flycast Linux x86-64 AppImage."
+    fi
+
+    FLYCAST_ASSET_NAME="$(
+        printf '%s' "$FLYCAST_ASSET_JSON" \
+        | jq -r '.name'
+    )"
+
+    FLYCAST_DOWNLOAD_URL="$(
+        printf '%s' "$FLYCAST_ASSET_JSON" \
+        | jq -r '.browser_download_url'
+    )"
+
+    FLYCAST_DIGEST="$(
+        printf '%s' "$FLYCAST_ASSET_JSON" \
+        | jq -r '.digest // empty'
+    )"
+
+    echo "Selected asset:"
+    echo "  $FLYCAST_ASSET_NAME"
+    echo
+
+    TEMP_DIR="$(mktemp -d)"
+    TEMP_DOWNLOAD="$TEMP_DIR/Flycast.AppImage"
+
+    echo "Downloading official stable AppImage..."
+
+    if ! curl -fL --progress-bar \
+        "$FLYCAST_DOWNLOAD_URL" \
+        -o "$TEMP_DOWNLOAD"
+    then
+        rm -rf "$TEMP_DIR"
+        die "Flycast download failed."
+    fi
+
+    if [[ "$FLYCAST_DIGEST" == sha256:* ]]; then
+
+        EXPECTED_SHA256="${FLYCAST_DIGEST#sha256:}"
+        ACTUAL_SHA256="$(sha256sum "$TEMP_DOWNLOAD" | awk '{print $1}')"
+
+        echo
+        echo "Checking Flycast SHA-256..."
+
+        if [[ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]]; then
+            rm -rf "$TEMP_DIR"
+            die "Flycast SHA-256 verification failed."
+        fi
+
+        echo "  SHA-256: OK"
+
+    else
+
+        echo
+        echo "No release-asset SHA-256 was supplied by GitHub."
+        echo "The AppImage was downloaded directly from the official"
+        echo "Flycast GitHub release."
+
+    fi
+
+    DOWNLOAD_TYPE="$(file -b "$TEMP_DOWNLOAD")"
+
+    echo
+    echo "Downloaded file type:"
+    echo "  $DOWNLOAD_TYPE"
+
+    if ! grep -qiE 'ELF|AppImage|executable' <<< "$DOWNLOAD_TYPE"; then
+        rm -rf "$TEMP_DIR"
+        die "Downloaded Flycast file does not look executable."
+    fi
+
+    cp "$TEMP_DOWNLOAD" "$FLYCAST_EXE"
+    chmod +x "$FLYCAST_EXE"
+
+    cat > "$FLYCAST_DIR/VERSION.txt" <<EOF
+BareFront managed emulator
+Emulator: Flycast
+Release: $FLYCAST_VERSION
+Source: https://github.com/flyinghead/flycast
+Asset: $FLYCAST_ASSET_NAME
+EOF
+
+    rm -rf "$TEMP_DIR"
+
+    echo
+    echo "Flycast AppImage installed."
+fi
+
+
+# ------------------------------------------------------------
+# Dreamcast firmware layout
+# ------------------------------------------------------------
+
+echo
+echo "Preparing Dreamcast firmware layout..."
+
+# Flycast looks for Dreamcast firmware inside a folder named
+# "data" beside the emulator.
+#
+# BareFront keeps the user's ORIGINAL verified firmware in:
+#
+#   bios/dreamcast/
+#
+# dc_boot.bin is effectively read-only firmware, so Flycast's
+# expected filename can safely be a symbolic link to that file.
+#
+# dc_flash.bin is writable console flash/NVRAM. We deliberately
+# do NOT point Flycast at the original BIOS copy because Flycast
+# may modify it during normal use. Instead the working copy lives
+# under saves/dreamcast/.
+#
+# The future BIOS checker will verify the user's source flash file
+# and seed the writable copy when necessary.
+
+FLYCAST_BOOT_LINK="$FLYCAST_DATA_DIR/dc_boot.bin"
+FLYCAST_FLASH_LINK="$FLYCAST_DATA_DIR/dc_flash.bin"
+
+BAREFRONT_DC_BOOT="$BAREFRONT_DIR/bios/dreamcast/dc_boot.bin"
+BAREFRONT_DC_FLASH_WORKING="$BAREFRONT_DIR/saves/dreamcast/dc_flash.bin"
+
+
+ensure_simple_symlink()
+{
+    local target="$1"
+    local link_path="$2"
+    local description="$3"
+
+    if [[ -L "$link_path" ]]; then
+
+        local current_target
+        current_target="$(readlink "$link_path")"
+
+        if [[ "$current_target" == "$target" ]]; then
+            echo "  $description: OK"
+        else
+            echo
+            echo "WARNING: Existing symbolic link:"
+            echo "  $link_path"
+            echo "points to:"
+            echo "  $current_target"
+            echo "Expected:"
+            echo "  $target"
+            echo "Leaving it untouched."
+        fi
+
+    elif [[ -e "$link_path" ]]; then
+
+        echo
+        echo "WARNING: A real file already exists at:"
+        echo "  $link_path"
+        echo "BareFront will not overwrite it."
+
+    else
+
+        # Linux allows a symbolic link to point at a file which
+        # does not exist yet. The link becomes valid automatically
+        # when the user later supplies the target file.
+        ln -s "$target" "$link_path"
+
+        echo "  $description: linked"
+        echo "    $link_path"
+        echo "      -> $target"
+
+    fi
+}
+
+
+ensure_simple_symlink \
+    "$BAREFRONT_DC_BOOT" \
+    "$FLYCAST_BOOT_LINK" \
+    "Dreamcast boot ROM"
+
+ensure_simple_symlink \
+    "$BAREFRONT_DC_FLASH_WORKING" \
+    "$FLYCAST_FLASH_LINK" \
+    "Dreamcast writable flash"
+
+
+# ------------------------------------------------------------
+# Record firmware instructions for the later checker
+# ------------------------------------------------------------
+
+cat > "$FLYCAST_DIR/FIRMWARE_LAYOUT.txt" <<EOF
+BareFront Dreamcast firmware layout
+
+Original firmware supplied by user:
+  $BAREFRONT_DIR/bios/dreamcast/dc_boot.bin
+  $BAREFRONT_DIR/bios/dreamcast/dc_flash.bin
+
+Flycast runtime paths:
+  $FLYCAST_DATA_DIR/dc_boot.bin
+    -> original verified boot ROM
+
+  $FLYCAST_DATA_DIR/dc_flash.bin
+    -> writable working copy:
+       $BAREFRONT_DIR/saves/dreamcast/dc_flash.bin
+
+The future BareFront BIOS checker will verify source firmware
+and create/update the working dc_flash.bin when appropriate.
+EOF
+
+
+# ------------------------------------------------------------
+# Final Flycast verification
+# ------------------------------------------------------------
+
+echo
+echo "Verifying Flycast..."
+
+if [[ -x "$FLYCAST_EXE" ]]; then
+    echo "  Executable: OK"
+    echo "  $FLYCAST_EXE"
+else
+    die "Flycast installation verification failed."
+fi
+
+if [[ -L "$FLYCAST_BOOT_LINK" ]]; then
+    echo "  Boot ROM link: OK"
+else
+    echo "  Boot ROM link: WARNING"
+fi
+
+if [[ -L "$FLYCAST_FLASH_LINK" ]]; then
+    echo "  Writable flash link: OK"
+else
+    echo "  Writable flash link: WARNING"
+fi
+
+echo
+echo "Flycast launch command will later use:"
+echo "  {rom}"
+echo
+echo "Flycast stage complete."
+
+
+# ============================================================
+# Stage 3B - Locally managed emulators
+# Part 5: BigPEmu
+# ============================================================
+
+heading "STAGE 3B / BIGPEMU"
+
+BIGPEMU_DIR="$BAREFRONT_DIR/emulators/bigpemu"
+BIGPEMU_LAUNCHER="$BIGPEMU_DIR/BigPEmu"
+
+# BigPEmu does not currently publish releases through a package
+# manager or machine-readable release API.
+#
+# For reproducibility BareFront pins the current known stable
+# Linux x64 build and verifies the exact size and upstream
+# FNV-1a hash before extracting it.
+BIGPEMU_VERSION="1.221"
+BIGPEMU_URL="https://www.richwhitehouse.com/jaguar/builds/BigPEmu_Linux64_v1221.tar.gz"
+BIGPEMU_EXPECTED_SIZE="8912737"
+BIGPEMU_EXPECTED_FNV="C1B241BBFA5135CB"
+
+echo "BareFront uses BigPEmu for:"
+echo "  Atari Jaguar"
+echo
+echo "Pinned stable release:"
+echo "  $BIGPEMU_VERSION"
+echo
+echo "Install location:"
+echo "  $BIGPEMU_DIR"
+echo
+
+
+BIGPEMU_UPSTREAM_EXEC="$BIGPEMU_DIR/bigpemu/bigpemu"
+
+if [[ -x "$BIGPEMU_LAUNCHER" ]]; then
+
+    echo "BigPEmu is already installed."
+    echo "BareFront launcher:"
+    echo "  $BIGPEMU_LAUNCHER"
+    echo "Action: SKIP"
+
+elif [[ -x "$BIGPEMU_UPSTREAM_EXEC" ]]; then
+
+    echo "Existing BigPEmu installation recognised."
+    echo "Executable:"
+    echo "  $BIGPEMU_UPSTREAM_EXEC"
+    echo
+    echo "Creating BareFront launcher link."
+
+    ln -s "$BIGPEMU_UPSTREAM_EXEC" "$BIGPEMU_LAUNCHER"
+
+    echo "Action: ADOPT EXISTING INSTALLATION"
+
+else
+
+    # If a partial/unrecognised installation already exists,
+    # do not destroy it automatically.
+    if [[ -d "$BIGPEMU_DIR" ]] && \
+       [[ -n "$(find "$BIGPEMU_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]
+    then
+        echo
+        echo "A non-empty BigPEmu directory already exists:"
+        echo "  $BIGPEMU_DIR"
+        echo
+        echo "BareFront will not overwrite an unrecognised installation."
+        die "Inspect or remove the existing BigPEmu directory before retrying."
+    fi
+
+    mkdir -p "$BIGPEMU_DIR"
+
+    TEMP_DIR="$(mktemp -d)"
+    TEMP_ARCHIVE="$TEMP_DIR/BigPEmu.tar.gz"
+    EXTRACT_DIR="$TEMP_DIR/extracted"
+
+    mkdir -p "$EXTRACT_DIR"
+
+    echo "Downloading official BigPEmu Linux x64 archive..."
+
+    if ! curl -fL --progress-bar \
+        "$BIGPEMU_URL" \
+        -o "$TEMP_ARCHIVE"
+    then
+        rm -rf "$TEMP_DIR"
+        die "BigPEmu download failed."
+    fi
+
+
+    # --------------------------------------------------------
+    # Verify exact byte size
+    #
+    # stat -c%s prints only the file size in bytes.
+    # --------------------------------------------------------
+
+    ACTUAL_SIZE="$(stat -c%s "$TEMP_ARCHIVE")"
+
+    echo
+    echo "Checking download size..."
+    echo "  Expected: $BIGPEMU_EXPECTED_SIZE bytes"
+    echo "  Actual:   $ACTUAL_SIZE bytes"
+
+    if [[ "$ACTUAL_SIZE" != "$BIGPEMU_EXPECTED_SIZE" ]]; then
+        rm -rf "$TEMP_DIR"
+        die "BigPEmu file-size verification failed."
+    fi
+
+    echo "  Size: OK"
+
+
+    # --------------------------------------------------------
+    # Verify BigPEmu's upstream 64-bit FNV-1a hash.
+    #
+    # The BigPEmu author publishes FNV-1a rather than SHA-256.
+    # Python is used here only to calculate that exact algorithm
+    # reliably across Linux shells.
+    # --------------------------------------------------------
+
+    ACTUAL_FNV="$(
+        python3 - "$TEMP_ARCHIVE" <<'PY'
+import sys
+
+path = sys.argv[1]
+
+# 64-bit FNV-1a constants.
+h = 0xcbf29ce484222325
+prime = 0x100000001b3
+mask = 0xffffffffffffffff
+
+with open(path, "rb") as f:
+    while True:
+        block = f.read(1024 * 1024)
+        if not block:
+            break
+
+        for byte in block:
+            h ^= byte
+            h = (h * prime) & mask
+
+print(f"{h:016X}")
+PY
+    )"
+
+    echo
+    echo "Checking upstream FNV-1a hash..."
+    echo "  Expected: $BIGPEMU_EXPECTED_FNV"
+    echo "  Actual:   $ACTUAL_FNV"
+
+    if [[ "$ACTUAL_FNV" != "$BIGPEMU_EXPECTED_FNV" ]]; then
+        rm -rf "$TEMP_DIR"
+        die "BigPEmu FNV-1a verification failed."
+    fi
+
+    echo "  FNV-1a: OK"
+
+
+    # --------------------------------------------------------
+    # Extract without changing the upstream layout.
+    #
+    # tar:
+    #   -x = extract
+    #   -z = decompress gzip
+    #   -f = archive filename follows
+    #   -C = extract into this directory
+    # --------------------------------------------------------
+
+    echo
+    echo "Extracting BigPEmu..."
+
+    if ! tar -xzf "$TEMP_ARCHIVE" -C "$EXTRACT_DIR"; then
+        rm -rf "$TEMP_DIR"
+        die "BigPEmu archive extraction failed."
+    fi
+
+
+    # Locate the real executable inside the preserved archive
+    # structure. The current Linux archive contains a top-level
+    # bigpemu directory, but discovery avoids depending on that
+    # nesting forever.
+    FOUND_BIGPEMU="$(
+        find "$EXTRACT_DIR" \
+            -type f \
+            -name 'bigpemu' \
+            -print \
+            -quit
+    )"
+
+    if [[ -z "$FOUND_BIGPEMU" ]]; then
+        rm -rf "$TEMP_DIR"
+        die "BigPEmu executable was not found in the official archive."
+    fi
+
+    chmod +x "$FOUND_BIGPEMU"
+
+    # Copy the entire extracted tree, not merely the executable.
+    # BigPEmu explicitly expects its support directory structure
+    # to remain intact.
+    cp -a "$EXTRACT_DIR"/. "$BIGPEMU_DIR"/
+
+    rm -rf "$TEMP_DIR"
+
+
+    # --------------------------------------------------------
+    # Create a predictable BareFront launcher link.
+    #
+    # Upstream keeps its own directory layout intact, while
+    # BareFront can always launch:
+    #
+    #   emulators/bigpemu/BigPEmu
+    # --------------------------------------------------------
+
+    INSTALLED_BIGPEMU="$(
+        find "$BIGPEMU_DIR" \
+            -type f \
+            -name 'bigpemu' \
+            -print \
+            -quit
+    )"
+
+    if [[ -z "$INSTALLED_BIGPEMU" ]]; then
+        die "BigPEmu executable disappeared after installation."
+    fi
+
+    chmod +x "$INSTALLED_BIGPEMU"
+
+    ln -s "$INSTALLED_BIGPEMU" "$BIGPEMU_LAUNCHER"
+
+
+    cat > "$BIGPEMU_DIR/VERSION.txt" <<EOF
+BareFront managed emulator
+Emulator: BigPEmu
+Release: $BIGPEMU_VERSION
+Source: https://www.richwhitehouse.com/jaguar/
+Linux archive: BigPEmu_Linux64_v1221.tar.gz
+Expected size: $BIGPEMU_EXPECTED_SIZE bytes
+Expected FNV-1a 64: $BIGPEMU_EXPECTED_FNV
+EOF
+
+    echo
+    echo "BigPEmu installed."
+fi
+
+
+# ------------------------------------------------------------
+# Final verification
+# ------------------------------------------------------------
+
+echo
+echo "Verifying BigPEmu..."
+
+if [[ -L "$BIGPEMU_LAUNCHER" ]] && [[ -x "$BIGPEMU_LAUNCHER" ]]; then
+    echo "  BareFront launcher: OK"
+    echo "  $BIGPEMU_LAUNCHER"
+    echo "    -> $(readlink "$BIGPEMU_LAUNCHER")"
+else
+    die "BigPEmu installation verification failed."
+fi
+
+echo
+echo "BigPEmu needs no mandatory Jaguar BIOS for normal"
+echo "cartridge-image use."
+echo
+echo "BareFront launch command will later use:"
+echo "  $BIGPEMU_LAUNCHER {rom}"
+echo
+echo "BigPEmu stage complete."
+
+
+# ============================================================
+# Stage 3B - Locally managed emulators
+# Part 6: bsnes v115
+# ============================================================
+
+heading "STAGE 3B / BSNES"
+
+BSNES_DIR="$BAREFRONT_DIR/emulators/bsnes"
+BSNES_EXE="$BSNES_DIR/bsnes"
+
+# v115 is the final official stable bsnes release from Near/byuu.
+# Official stable Linux binaries are not provided in a form we
+# want to depend on, so BareFront builds the tagged stable source.
+BSNES_VERSION="v115"
+BSNES_SOURCE_URL="https://github.com/bsnes-emu/bsnes/archive/refs/tags/v115.tar.gz"
+
+echo "BareFront uses bsnes for:"
+echo "  Super NES"
+echo
+echo "Stable source release:"
+echo "  $BSNES_VERSION"
+echo
+echo "Install location:"
+echo "  $BSNES_DIR"
+echo
+
+
+if [[ -x "$BSNES_EXE" ]]; then
+
+    echo "bsnes is already installed."
+    echo "Executable:"
+    echo "  $BSNES_EXE"
+    echo "Action: SKIP"
+
+else
+
+    # --------------------------------------------------------
+    # Build dependencies
+    # --------------------------------------------------------
+
+    echo "Installing/verifying bsnes build dependencies..."
+    echo
+
+    BSNES_BUILD_PACKAGES=(
+        libgtk-3-dev
+        libgtksourceview-3.0-dev
+        libsdl2-dev
+        libxv-dev
+        libgl1-mesa-dev
+        libasound2-dev
+        libopenal-dev
+        libpulse-dev
+        libao-dev
+        libudev-dev
+        libxrandr-dev
+        libxext-dev
+    )
+
+    if ! sudo apt-get install -y "${BSNES_BUILD_PACKAGES[@]}"; then
+        die "Could not install bsnes build dependencies."
+    fi
+
+
+    # --------------------------------------------------------
+    # Temporary build workspace
+    # --------------------------------------------------------
+
+    TEMP_DIR="$(mktemp -d)"
+    SOURCE_ARCHIVE="$TEMP_DIR/bsnes-v115.tar.gz"
+    SOURCE_ROOT="$TEMP_DIR/source"
+
+    mkdir -p "$SOURCE_ROOT"
+
+    echo
+    echo "Downloading official bsnes v115 source..."
+
+    if ! curl -fL --progress-bar \
+        "$BSNES_SOURCE_URL" \
+        -o "$SOURCE_ARCHIVE"
+    then
+        rm -rf "$TEMP_DIR"
+        die "bsnes v115 source download failed."
+    fi
+
+    echo
+    echo "Downloaded archive:"
+    echo "  $(file -b "$SOURCE_ARCHIVE")"
+
+
+    # --------------------------------------------------------
+    # Extract source
+    # --------------------------------------------------------
+
+    echo
+    echo "Extracting bsnes source..."
+
+    if ! tar -xzf "$SOURCE_ARCHIVE" -C "$SOURCE_ROOT"; then
+        rm -rf "$TEMP_DIR"
+        die "bsnes source extraction failed."
+    fi
+
+    BSNES_SOURCE_DIR="$(
+        find "$SOURCE_ROOT" \
+            -mindepth 1 \
+            -maxdepth 1 \
+            -type d \
+            -name 'bsnes-*' \
+            -print \
+            -quit
+    )"
+
+    if [[ -z "$BSNES_SOURCE_DIR" ]]; then
+        rm -rf "$TEMP_DIR"
+        die "Could not locate the extracted bsnes source directory."
+    fi
+
+    echo "Source directory:"
+    echo "  $BSNES_SOURCE_DIR"
+
+
+    # --------------------------------------------------------
+    # Debian 13 / modern GCC compatibility patch
+    #
+    # v115 uses std::runtime_error in natural.hpp but does not
+    # explicitly include <stdexcept>. Modern GCC correctly
+    # requires that header.
+    #
+    # The patch is tiny and applied only if it is not already
+    # present.
+    # --------------------------------------------------------
+
+    NATURAL_HPP="$BSNES_SOURCE_DIR/nall/arithmetic/natural.hpp"
+
+    if [[ ! -f "$NATURAL_HPP" ]]; then
+        rm -rf "$TEMP_DIR"
+        die "Expected bsnes source file natural.hpp is missing."
+    fi
+
+    if grep -q '^#include <stdexcept>' "$NATURAL_HPP"; then
+
+        echo
+        echo "Modern-GCC compatibility include already present."
+
+    else
+
+        echo
+        echo "Applying Debian 13 / modern-GCC compatibility patch..."
+        echo "  Adding: #include <stdexcept>"
+
+        # sed -i edits the file in place.
+        #
+        # 1i means:
+        #   at line 1, INSERT the following text.
+        sed -i '1i#include <stdexcept>' "$NATURAL_HPP"
+
+    fi
+
+
+    # --------------------------------------------------------
+    # Compile
+    #
+    # make tells GNU Make to follow the project's build rules.
+    #
+    # -C bsnes
+    #   changes into the source's bsnes directory before building.
+    #
+    # hiro=gtk3
+    #   builds the Linux GTK3 graphical interface.
+    #
+    # local=false
+    #   IMPORTANT: do not optimise the binary only for the CPU
+    #   currently doing the build. This makes the resulting
+    #   BareFront bsnes binary more portable to other amd64 PCs.
+    #
+    # -j"$(nproc)"
+    #   compile several files in parallel. `nproc` asks Linux how
+    #   many CPU processing units are available.
+    # --------------------------------------------------------
+
+    echo
+    echo "Building bsnes $BSNES_VERSION..."
+    echo
+    echo "Build command:"
+    echo '  make -C bsnes hiro=gtk3 local=false -j"$(nproc)"'
+    echo
+
+    if ! make \
+        -C "$BSNES_SOURCE_DIR/bsnes" \
+        hiro=gtk3 \
+        local=false \
+        -j"$(nproc)"
+    then
+        rm -rf "$TEMP_DIR"
+        die "bsnes compilation failed."
+    fi
+
+
+    BUILT_BSNES="$BSNES_SOURCE_DIR/bsnes/out/bsnes"
+
+    if [[ ! -x "$BUILT_BSNES" ]]; then
+        rm -rf "$TEMP_DIR"
+        die "bsnes build completed but the expected executable was not produced."
+    fi
+
+
+    # --------------------------------------------------------
+    # Install the finished build
+    # --------------------------------------------------------
+
+    mkdir -p "$BSNES_DIR"
+
+    cp "$BUILT_BSNES" "$BSNES_EXE"
+    chmod +x "$BSNES_EXE"
+
+    # Keep the stable release database beside the executable
+    # when it is present in the source tree.
+    if [[ -d "$BSNES_SOURCE_DIR/bsnes/Database" ]]; then
+        rm -rf "$BSNES_DIR/Database"
+        cp -a \
+            "$BSNES_SOURCE_DIR/bsnes/Database" \
+            "$BSNES_DIR/Database"
+    fi
+
+    cat > "$BSNES_DIR/VERSION.txt" <<EOF
+BareFront managed emulator
+Emulator: bsnes
+Release: v115
+Source: https://github.com/bsnes-emu/bsnes
+Build UI: GTK3
+CPU-specific optimisation: disabled (local=false)
+BareFront Debian 13 compatibility patch:
+  nall/arithmetic/natural.hpp includes <stdexcept>
+EOF
+
+    rm -rf "$TEMP_DIR"
+
+    echo
+    echo "bsnes v115 built and installed."
+fi
+
+
+# ------------------------------------------------------------
+# Final verification
+# ------------------------------------------------------------
+
+echo
+echo "Verifying bsnes..."
+
+if [[ -x "$BSNES_EXE" ]]; then
+
+    echo "  Executable: OK"
+    echo "  $BSNES_EXE"
+
+else
+
+    die "bsnes installation verification failed."
+
+fi
+
+if [[ -d "$BSNES_DIR/Database" ]]; then
+    echo "  Database: OK"
+else
+    echo "  Database: not present"
+    echo "  This is not treated as a fatal installer error."
+fi
+
+echo
+echo "No SNES BIOS is required for ordinary cartridge games."
+echo
+echo "BareFront launch command will later use:"
+echo "  $BSNES_EXE {rom}"
+echo
+echo "bsnes stage complete."
+
+
+# ============================================================
+# Stage 3B - Locally managed integration
+# Part 7: Amiberry
+# ============================================================
+
+heading "STAGE 3B / AMIBERRY"
+
+AMIBERRY_EXE="/usr/bin/amiberry"
+AMIBERRY_LOCAL_DIR="$BAREFRONT_DIR/emulators/amiberry"
+AMIBERRY_CONF="$AMIBERRY_LOCAL_DIR/amiberry.conf"
+AMIBERRY_LAUNCHER="$BAREFRONT_DIR/scripts/launch_amiberry.sh"
+
+echo "BareFront uses Amiberry for:"
+echo "  Amiga"
+echo
+echo "Amiberry installation method:"
+echo "  Official Amiberry Debian package repository"
+echo
+echo "Expected executable:"
+echo "  $AMIBERRY_EXE"
+echo
+
+
+# ------------------------------------------------------------
+# Install Amiberry from the official package repository
+# ------------------------------------------------------------
+
+if package_is_installed "amiberry" && [[ -x "$AMIBERRY_EXE" ]]; then
+
+    echo "Amiberry is already installed."
+    echo "Action: SKIP package installation."
+
+else
+
+    # First ask APT whether an Amiberry package is already visible.
+    AMIBERRY_CANDIDATE="$(
+        apt-cache policy amiberry 2>/dev/null \
+        | awk '/Candidate:/ {print $2}'
+    )"
+
+    if [[ -z "$AMIBERRY_CANDIDATE" || "$AMIBERRY_CANDIDATE" == "(none)" ]]; then
+
+        echo
+        echo "Amiberry is not currently visible to Debian APT."
+        echo
+        echo "The Amiberry project recommends its official package"
+        echo "repository for Debian 13."
+        echo
+        echo "BareFront can add that repository using the official"
+        echo "Amiberry repository setup script from:"
+        echo
+        echo "  https://packages.amiberry.com/install.sh"
+        echo
+        echo "This will add Amiberry's package source/signing setup"
+        echo "to Debian. It does NOT install ROMs or Kickstart files."
+        echo
+
+        read -r -p "Add the official Amiberry repository? [Y/n] " reply
+        reply="${reply:-Y}"
+
+        if [[ ! "$reply" =~ ^[Yy]$ ]]; then
+            die "Amiberry repository setup was declined."
+        fi
+
+        TEMP_DIR="$(mktemp -d)"
+        AMIBERRY_REPO_SCRIPT="$TEMP_DIR/amiberry-install.sh"
+
+        echo
+        echo "Downloading the official Amiberry repository setup script..."
+
+        # We deliberately download the script FIRST and run the saved
+        # file afterwards. This is clearer than piping web content
+        # directly into a root shell.
+        if ! curl -fsSL \
+            "https://packages.amiberry.com/install.sh" \
+            -o "$AMIBERRY_REPO_SCRIPT"
+        then
+            rm -rf "$TEMP_DIR"
+            die "Could not download Amiberry's repository setup script."
+        fi
+
+        echo "Downloaded:"
+        echo "  $AMIBERRY_REPO_SCRIPT"
+        echo
+        echo "Running the official repository setup..."
+
+        if ! sudo sh "$AMIBERRY_REPO_SCRIPT"; then
+            rm -rf "$TEMP_DIR"
+            die "Amiberry repository setup failed."
+        fi
+
+        rm -rf "$TEMP_DIR"
+
+        echo
+        echo "Refreshing Debian package catalogue..."
+
+        if ! sudo apt-get update; then
+            die "APT refresh failed after adding the Amiberry repository."
+        fi
+    fi
+
+
+    echo
+    echo "Installing Amiberry..."
+
+    if ! sudo apt-get install -y amiberry; then
+        die "Amiberry package installation failed."
+    fi
+
+fi
+
+
+# ------------------------------------------------------------
+# Verify installed package
+# ------------------------------------------------------------
+
+echo
+echo "Verifying Amiberry package..."
+
+if [[ ! -x "$AMIBERRY_EXE" ]]; then
+    die "Amiberry package was installed but /usr/bin/amiberry is missing."
+fi
+
+AMIBERRY_PACKAGE_VERSION="$(
+    dpkg-query -W -f='${Version}' amiberry 2>/dev/null || true
+)"
+
+echo "  Executable: OK"
+echo "  $AMIBERRY_EXE"
+echo
+echo "Installed package version:"
+echo "  ${AMIBERRY_PACKAGE_VERSION:-Unknown}"
+
+
+# ------------------------------------------------------------
+# BareFront-owned Amiga directories
+# ------------------------------------------------------------
+
+mkdir -p \
+    "$AMIBERRY_LOCAL_DIR" \
+    "$AMIBERRY_LOCAL_DIR/conf" \
+    "$BAREFRONT_DIR/roms/amiga" \
+    "$BAREFRONT_DIR/bios/amiga" \
+    "$BAREFRONT_DIR/saves/amiga/savestates" \
+    "$BAREFRONT_DIR/saves/amiga/nvram" \
+    "$BAREFRONT_DIR/saves/amiga/saveimages" \
+    "$BAREFRONT_DIR/assets/games/amiga"
+
+
+# ------------------------------------------------------------
+# Generate BareFront's Amiberry global configuration
+#
+# Amiberry normally spreads its content between ~/Amiberry,
+# ~/.config/amiberry and ~/.local/share/amiberry.
+#
+# For a BareFront appliance we instead use a dedicated config
+# file and explicitly point the useful paths at our project.
+# ------------------------------------------------------------
+
+echo
+echo "Generating BareFront Amiberry path configuration..."
+
+cat > "$AMIBERRY_CONF" <<EOF
+# BareFront-managed Amiberry configuration
+#
+# Emulator-specific settings can still be changed inside Amiberry.
+# These entries only make BareFront's filesystem layout predictable.
+
+config_path=$AMIBERRY_LOCAL_DIR/conf
+rom_path=$BAREFRONT_DIR/bios/amiga
+
+# BareFront keeps all Amiga game media in the system ROM folder.
+whdload_arch_path=$BAREFRONT_DIR/roms/amiga
+floppy_path=$BAREFRONT_DIR/roms/amiga
+harddrive_path=$BAREFRONT_DIR/roms/amiga
+cdrom_path=$BAREFRONT_DIR/roms/amiga
+
+savestate_dir=$BAREFRONT_DIR/saves/amiga/savestates
+nvram_dir=$BAREFRONT_DIR/saves/amiga/nvram
+saveimage_dir=$BAREFRONT_DIR/saves/amiga/saveimages
+screenshot_dir=$BAREFRONT_DIR/assets/games/amiga
+
+logfile_path=$BAREFRONT_DIR/logs/amiberry.log
+EOF
+
+echo "  Configuration:"
+echo "  $AMIBERRY_CONF"
+
+
+# ------------------------------------------------------------
+# Generate a small BareFront launcher wrapper
+#
+# Why a wrapper?
+#
+# /usr/bin/amiberry is owned by Debian/APT and should stay that
+# way. The wrapper adds BareFront's custom configuration without
+# modifying the system-installed executable.
+# ------------------------------------------------------------
+
+echo
+echo "Creating BareFront Amiberry launcher..."
+
+cat > "$AMIBERRY_LAUNCHER" <<'EOF'
+#!/bin/bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROM="${1:-}"
+
+if [[ -z "$ROM" ]]; then
+    echo "Usage: launch_amiberry.sh <game-file>" >&2
+    exit 1
+fi
+
+CONF="$ROOT/emulators/amiberry/amiberry.conf"
+
+exec /usr/bin/amiberry \
+    -o "amiberry_config=$CONF" \
+    -G \
+    "$ROM"
+EOF
+
+chmod +x "$AMIBERRY_LAUNCHER"
+
+echo "  Launcher:"
+echo "  $AMIBERRY_LAUNCHER"
+
+
+# ------------------------------------------------------------
+# Verify Amiberry's resolved paths without launching the GUI.
+#
+# --dump-paths is an official diagnostic/dry-run command.
+# It prints the paths Amiberry resolved and exits.
+# ------------------------------------------------------------
+
+echo
+echo "Checking Amiberry resolved paths..."
+
+AMIBERRY_PATH_DUMP="$(
+    "$AMIBERRY_EXE" \
+        -o "amiberry_config=$AMIBERRY_CONF" \
+        --dump-paths \
+        2>&1 || true
+)"
+
+printf '%s\n' "$AMIBERRY_PATH_DUMP" \
+    | sed 's/^/  /'
+
+
+# ------------------------------------------------------------
+# Kickstart note
+# ------------------------------------------------------------
+
+echo
+echo "Amiga Kickstart ROMs belong in:"
+echo "  $BAREFRONT_DIR/bios/amiga/"
+echo
+echo "For encrypted/licensed Cloanto ROM sets, rom.key should be"
+echo "kept alongside the Kickstart ROMs."
+echo
+echo "BareFront will later verify known Kickstart files by:"
+echo "  filename / size / CRC32 / SHA-256"
+echo
+echo "Amiberry does not require one single Kickstart version for"
+echo "every game; the firmware checker will accept recognised"
+echo "compatible variants."
+
+
+# ------------------------------------------------------------
+# Install record
+# ------------------------------------------------------------
+
+cat > "$AMIBERRY_LOCAL_DIR/VERSION.txt" <<EOF
+BareFront managed emulator integration
+Emulator: Amiberry
+Package version: ${AMIBERRY_PACKAGE_VERSION:-Unknown}
+Executable: /usr/bin/amiberry
+Source: https://packages.amiberry.com/
+BareFront config: $AMIBERRY_CONF
+BareFront launcher: $AMIBERRY_LAUNCHER
+EOF
+
+
+# ------------------------------------------------------------
+# Final verification
+# ------------------------------------------------------------
+
+echo
+echo "Verifying Amiberry integration..."
+
+if [[ -x "$AMIBERRY_EXE" ]]; then
+    echo "  System executable: OK"
+else
+    die "Amiberry executable verification failed."
+fi
+
+if [[ -f "$AMIBERRY_CONF" ]]; then
+    echo "  BareFront config: OK"
+else
+    die "Amiberry BareFront config was not created."
+fi
+
+if [[ -x "$AMIBERRY_LAUNCHER" ]]; then
+    echo "  BareFront launcher: OK"
+else
+    die "Amiberry BareFront launcher was not created."
+fi
+
+echo
+echo "BareFront launch command will later use:"
+echo "  $AMIBERRY_LAUNCHER {rom}"
+echo
+echo "Amiberry stage complete."
+
+
+# ============================================================
+# Stage 4 - Production BareFront configuration
+# ============================================================
+
+heading "STAGE 4 / PRODUCTION CONFIGURATION"
+
+CONFIG_FILE="$BAREFRONT_DIR/barefront.ini"
+CONFIG_CONFLICT="$LOG_DIR/barefront.ini.generated"
+VICE_LAUNCHER="$BAREFRONT_DIR/scripts/launch_vice.sh"
+MAME_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mame.sh"
+
+mkdir -p "$BAREFRONT_DIR/scripts"
+
+
+# ------------------------------------------------------------
+# VICE launcher adapter
+#
+# BareFront deliberately keeps emulator-specific setup outside
+# the C++ frontend.
+#
+# The Debian VICE executable needs several C64 ROM paths on the
+# command line in our known-working setup. Keeping that detail
+# inside this adapter gives barefront.ini a simple:
+#
+#   emulator=.../launch_vice.sh
+#   arguments={rom}
+#
+# The end user never has to type or maintain those arguments.
+# ------------------------------------------------------------
+
+echo "Creating/verifying C64 VICE launcher..."
+
+cat > "$VICE_LAUNCHER" <<'EOF'
+#!/bin/bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROM="${1:-}"
+
+if [[ -z "$ROM" ]]; then
+    echo "Usage: launch_vice.sh <game-file>" >&2
+    exit 1
+fi
+
+exec /usr/bin/x64sc \
+    -basic "$ROOT/bios/c64/basic-901226-01.bin" \
+    -kernal "$ROOT/bios/c64/kernal-901227-03.bin" \
+    -chargen "$ROOT/bios/c64/chargen-901225-01.bin" \
+    -dos1541 "$ROOT/bios/c64/dos1541-325302-01+901229-05.bin" \
+    -drive8type 1541 \
+    -autostart "$ROM"
+EOF
+
+chmod +x "$VICE_LAUNCHER"
+
+if [[ -x "$VICE_LAUNCHER" ]]; then
+    echo "  VICE adapter: OK"
+    echo "  $VICE_LAUNCHER"
+else
+    die "Could not create the BareFront VICE launcher."
+fi
+
+
+# ------------------------------------------------------------
+# MAME launcher adapter
+#
+# BareFront stores the selected ROM as a complete path such as:
+#
+#   roms/arcade/pacman.zip
+#
+# MAME normally launches by SET NAME:
+#
+#   mame pacman
+#
+# This adapter converts the selected archive path into its set
+# name and supplies all BareFront Arcade / Neo Geo ROM and BIOS
+# locations as MAME search paths.
+# ------------------------------------------------------------
+
+echo
+echo "Creating/verifying Arcade / Neo Geo MAME launcher..."
+
+cat > "$MAME_LAUNCHER" <<'EOF'
+#!/bin/bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROM="${1:-}"
+
+if [[ -z "$ROM" ]]; then
+    echo "Usage: launch_mame.sh <rom-archive>" >&2
+    exit 1
+fi
+
+ROM_DIR="$(dirname "$ROM")"
+ROM_FILE="$(basename "$ROM")"
+SET_NAME="${ROM_FILE%.*}"
+
+# MAME accepts a semicolon-separated ROM search path.
+#
+# Include the selected game's own directory first, then both
+# BareFront MAME-backed system libraries and BIOS directories.
+ROMPATH="$ROM_DIR;$ROOT/roms/arcade;$ROOT/roms/neogeo;$ROOT/bios/arcade;$ROOT/bios/neogeo"
+
+exec /usr/games/mame \
+    "$SET_NAME" \
+    -rompath "$ROMPATH"
+EOF
+
+chmod +x "$MAME_LAUNCHER"
+
+if [[ -x "$MAME_LAUNCHER" ]]; then
+    echo "  MAME adapter: OK"
+    echo "  $MAME_LAUNCHER"
+else
+    die "Could not create the BareFront MAME launcher."
+fi
+
+
+# ------------------------------------------------------------
+# Generate the production barefront.ini
+#
+# ROM and screenshot locations are deliberately relative to the
+# BareFront project root. BareFront already loads its assets and
+# barefront.ini relative to that root, and relative library paths
+# mean the whole BareFront folder can move without embedding a
+# particular Linux username in every system entry.
+#
+# Emulator executables/adapters use the paths which this installer
+# has just installed and verified.
+# ------------------------------------------------------------
+
+echo
+echo "Generating production BareFront configuration..."
+
+TEMP_CONFIG="$(mktemp)"
+
+cat > "$TEMP_CONFIG" <<EOF
+# ============================================================
+# BareFront production configuration
+# Generated by the BareFront installer
+#
+# Managed paths only:
+#   roms        game library
+#   screenshots preview screenshot library
+#   emulator    executable / BareFront adapter
+#   arguments   emulator launch arguments
+#
+# {rom} is replaced safely by BareFront with the selected game's
+# complete path. Do not put quotes around {rom}.
+#
+# Production installs use roms/, NEVER testroms/.
+# ============================================================
+
+[megadrive]
+roms=roms/megadrive
+screenshots=assets/games/megadrive
+emulator=/usr/games/blastem
+arguments={rom}
+
+[nes]
+roms=roms/nes
+screenshots=assets/games/nes
+emulator=$MESEN_EXE
+arguments={rom}
+
+[snes]
+roms=roms/snes
+screenshots=assets/games/snes
+emulator=$BSNES_EXE
+arguments={rom}
+
+[ps1]
+roms=roms/ps1
+screenshots=assets/games/ps1
+emulator=$DUCKSTATION_EXE
+arguments=-batch -- {rom}
+
+[ps2]
+roms=roms/ps2
+screenshots=assets/games/ps2
+emulator=$PCSX2_EXE
+arguments=-batch -slowboot {rom}
+
+[mastersystem]
+roms=roms/mastersystem
+screenshots=assets/games/mastersystem
+emulator=$MESEN_EXE
+arguments={rom}
+
+[atari2600]
+roms=roms/atari2600
+screenshots=assets/games/atari2600
+emulator=/usr/bin/stella
+arguments={rom}
+
+[c64]
+roms=roms/c64
+screenshots=assets/games/c64
+emulator=$VICE_LAUNCHER
+arguments={rom}
+
+[arcade]
+roms=roms/arcade
+screenshots=assets/games/arcade
+emulator=$MAME_LAUNCHER
+arguments={rom}
+
+[neogeo]
+roms=roms/neogeo
+screenshots=assets/games/neogeo
+emulator=$MAME_LAUNCHER
+arguments={rom}
+
+[dreamcast]
+roms=roms/dreamcast
+screenshots=assets/games/dreamcast
+emulator=$FLYCAST_EXE
+arguments={rom}
+
+[saturn]
+roms=roms/saturn
+screenshots=assets/games/saturn
+emulator=/usr/games/mednafen
+arguments=-force_module ss {rom}
+
+[pcengine]
+roms=roms/pcengine
+screenshots=assets/games/pcengine
+emulator=/usr/games/mednafen
+arguments=-force_module pce_fast {rom}
+
+[jaguar]
+roms=roms/jaguar
+screenshots=assets/games/jaguar
+emulator=$BIGPEMU_LAUNCHER
+arguments={rom}
+
+[gamecube]
+roms=roms/gamecube
+screenshots=assets/games/gamecube
+emulator=/usr/games/dolphin-emu
+arguments=-b -e {rom}
+
+[amiga]
+roms=roms/amiga
+screenshots=assets/games/amiga
+emulator=$AMIBERRY_LAUNCHER
+arguments={rom}
+EOF
+
+
+# ------------------------------------------------------------
+# Sanity-check the generated candidate before touching the live
+# configuration.
+# ------------------------------------------------------------
+
+echo
+echo "Checking generated configuration..."
+
+EXPECTED_SECTIONS=(
+    megadrive
+    nes
+    snes
+    ps1
+    ps2
+    mastersystem
+    atari2600
+    c64
+    arcade
+    neogeo
+    dreamcast
+    saturn
+    pcengine
+    jaguar
+    gamecube
+    amiga
+)
+
+for section in "${EXPECTED_SECTIONS[@]}"; do
+
+    count="$(
+        grep -c -x "\[$section\]" "$TEMP_CONFIG" || true
+    )"
+
+    if [[ "$count" -ne 1 ]]; then
+        rm -f "$TEMP_CONFIG"
+        die "Generated barefront.ini has an invalid [$section] section."
+    fi
+
+done
+
+if grep -Eq '^(roms|screenshots|emulator|arguments)=.*testroms/' "$TEMP_CONFIG"; then
+    rm -f "$TEMP_CONFIG"
+    die "Production configuration unexpectedly contains testroms/."
+fi
+
+if [[ "$(grep -c '^roms=roms/' "$TEMP_CONFIG")" -ne 16 ]]; then
+    rm -f "$TEMP_CONFIG"
+    die "Generated barefront.ini does not contain 16 production ROM paths."
+fi
+
+if [[ "$(grep -c '^screenshots=assets/games/' "$TEMP_CONFIG")" -ne 16 ]]; then
+    rm -f "$TEMP_CONFIG"
+    die "Generated barefront.ini does not contain 16 screenshot paths."
+fi
+
+if [[ "$(grep -c '^emulator=' "$TEMP_CONFIG")" -ne 16 ]]; then
+    rm -f "$TEMP_CONFIG"
+    die "Generated barefront.ini does not contain 16 emulator entries."
+fi
+
+if [[ "$(grep -c '^arguments=' "$TEMP_CONFIG")" -ne 16 ]]; then
+    rm -f "$TEMP_CONFIG"
+    die "Generated barefront.ini does not contain 16 argument entries."
+fi
+
+echo "  16 systems: OK"
+echo "  roms/ production paths: OK"
+echo "  testroms/ absent: OK"
+echo "  emulator entries: OK"
+
+
+# ------------------------------------------------------------
+# Idempotent/safe config installation
+#
+# Fresh install:
+#   install barefront.ini automatically.
+#
+# Exact rerun:
+#   leave the identical file alone.
+#
+# Existing DIFFERENT configuration:
+#   NEVER silently overwrite the user's file. Keep the candidate
+#   in logs/barefront.ini.generated so it can be compared during
+#   development/update handling.
+# ------------------------------------------------------------
+
+echo
+
+if [[ ! -e "$CONFIG_FILE" ]]; then
+
+    mv "$TEMP_CONFIG" "$CONFIG_FILE"
+
+    echo "Production configuration installed:"
+    echo "  $CONFIG_FILE"
+
+elif cmp -s "$TEMP_CONFIG" "$CONFIG_FILE"; then
+
+    rm -f "$TEMP_CONFIG"
+
+    echo "Production configuration already matches."
+    echo "  Action: SKIP"
+
+else
+
+    mv "$TEMP_CONFIG" "$CONFIG_CONFLICT"
+
+    echo "WARNING: An existing barefront.ini is different."
+    echo
+    echo "BareFront has NOT overwritten it."
+    echo
+    echo "Existing:"
+    echo "  $CONFIG_FILE"
+    echo
+    echo "Fresh generated candidate:"
+    echo "  $CONFIG_CONFLICT"
+    echo
+    echo "This is intentional protection against destroying user"
+    echo "configuration on a rerun or upgrade."
+
+fi
+
+
+# ------------------------------------------------------------
+# Validate whichever live file exists.
+# ------------------------------------------------------------
+
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    die "barefront.ini was not created."
+fi
+
+echo
+echo "Live BareFront configuration:"
+echo "  $CONFIG_FILE"
+
+LIVE_SECTION_COUNT="$(
+    grep -c '^\[[^]]\+\]$' "$CONFIG_FILE" || true
+)"
+
+echo "  Sections found: $LIVE_SECTION_COUNT"
+
+if grep -q 'testroms/' "$CONFIG_FILE"; then
+
+    echo
+    echo "NOTE: The existing live configuration still contains"
+    echo "development testroms/ paths."
+    echo
+    echo "The production candidate is available at:"
+    echo "  $CONFIG_CONFLICT"
+    echo
+    echo "We will compare this with the golden VM before replacing"
+    echo "its known-good development configuration."
+
+else
+
+    echo "  Production ROM paths: OK"
+
+fi
+
+
+# ------------------------------------------------------------
+# Human-readable summary
+# ------------------------------------------------------------
+
+echo
+echo "BareFront production library layout:"
+echo
+echo "  Games:"
+echo "    $BAREFRONT_DIR/roms/<system>/"
+echo
+echo "  BIOS / firmware:"
+echo "    $BAREFRONT_DIR/bios/<system>/"
+echo
+echo "  Saves:"
+echo "    $BAREFRONT_DIR/saves/<system>/"
+echo
+echo "  Preview screenshots:"
+echo "    $BAREFRONT_DIR/assets/games/<system>/"
+echo
+echo "  Preview videos:"
+echo "    $BAREFRONT_DIR/assets/videos/<system>/"
+echo
+echo "Stage 4 configuration generation complete."
+
+
+# ============================================================
+# Stage 5A - BIOS / firmware readiness checker
+# ============================================================
+
+heading "STAGE 5A / FIRMWARE READINESS"
+
+CHECK_BIOS_SCRIPT="$BAREFRONT_DIR/scripts/check_bios.sh"
+
+echo "Creating BareFront firmware checker..."
+echo
+
+
+cat > "$CHECK_BIOS_SCRIPT" <<'EOF'
+#!/bin/bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+OK=0
+WARN=0
+FAIL=0
+
+green()
+{
+    printf '\033[1;32m%s\033[0m' "$1"
+}
+
+yellow()
+{
+    printf '\033[1;33m%s\033[0m' "$1"
+}
+
+red()
+{
+    printf '\033[1;31m%s\033[0m' "$1"
+}
+
+heading()
+{
+    echo
+    echo "============================================================"
+    echo "$1"
+    echo "============================================================"
+    echo
+}
+
+pass()
+{
+    local system="$1"
+    local message="$2"
+
+    printf "%-18s " "$system"
+    green "✅"
+    printf " %s\n" "$message"
+
+    OK=$((OK + 1))
+}
+
+warn()
+{
+    local system="$1"
+    local message="$2"
+
+    printf "%-18s " "$system"
+    yellow "⚠"
+    printf " %s\n" "$message"
+
+    WARN=$((WARN + 1))
+}
+
+fail()
+{
+    local system="$1"
+    local message="$2"
+
+    printf "%-18s " "$system"
+    red "❌"
+    printf " %s\n" "$message"
+
+    FAIL=$((FAIL + 1))
+}
+
+has_any_file()
+{
+    local dir="$1"
+
+    [[ -d "$dir" ]] &&
+    find "$dir" -maxdepth 1 -type f -print -quit 2>/dev/null \
+        | grep -q .
+}
+
+
+heading "BAREFRONT FIRMWARE CHECK"
+
+echo "This first checker verifies whether the expected firmware"
+echo "is present in BareFront's standard folders."
+echo
+echo "Checksum recognition will be added in the next firmware"
+echo "database stage."
+echo
+
+
+# ------------------------------------------------------------
+# Systems which require no external firmware for ordinary use
+# ------------------------------------------------------------
+
+pass "Mega Drive"    "No firmware required"
+pass "NES"           "No firmware required"
+pass "Super NES"     "No firmware required"
+pass "Master System" "No firmware required"
+pass "Atari 2600"    "No firmware required"
+pass "Atari Jaguar"  "No mandatory firmware required"
+pass "GameCube"      "No external BIOS required"
+
+
+# ------------------------------------------------------------
+# PlayStation
+#
+# DuckStation needs a real PlayStation BIOS supplied by the user.
+# Several legitimate regional BIOS variants exist, so Stage 5A
+# checks for presence only. Stage 5B will recognise known files
+# by size, CRC32 and SHA-256.
+# ------------------------------------------------------------
+
+PS1_DIR="$ROOT/bios/ps1"
+
+if has_any_file "$PS1_DIR"; then
+    pass "PlayStation" "BIOS file present - checksum check pending"
+else
+    fail "PlayStation" "BIOS missing - add dumped BIOS to bios/ps1/"
+fi
+
+
+# ------------------------------------------------------------
+# PlayStation 2
+#
+# PCSX2 accepts many legitimate console BIOS revisions/regions.
+# Do not require one particular filename.
+# ------------------------------------------------------------
+
+PS2_DIR="$ROOT/bios/ps2"
+
+if has_any_file "$PS2_DIR"; then
+    pass "PlayStation 2" "BIOS file present - recognition pending"
+else
+    fail "PlayStation 2" "BIOS missing - add dumped BIOS to bios/ps2/"
+fi
+
+
+# ------------------------------------------------------------
+# Commodore 64
+#
+# These exact files match BareFront's VICE launcher adapter.
+# ------------------------------------------------------------
+
+C64_DIR="$ROOT/bios/c64"
+
+C64_REQUIRED=(
+    "basic-901226-01.bin"
+    "kernal-901227-03.bin"
+    "chargen-901225-01.bin"
+    "dos1541-325302-01+901229-05.bin"
+)
+
+C64_MISSING=0
+
+for file in "${C64_REQUIRED[@]}"; do
+    if [[ ! -f "$C64_DIR/$file" ]]; then
+        C64_MISSING=$((C64_MISSING + 1))
+    fi
+done
+
+if [[ "$C64_MISSING" -eq 0 ]]; then
+    pass "Commodore 64" "All four VICE firmware files present"
+else
+    fail "Commodore 64" "$C64_MISSING required firmware file(s) missing"
+fi
+
+
+# ------------------------------------------------------------
+# Arcade
+#
+# Ordinary MAME arcade sets contain their own required ROM
+# components or reference parent/device sets. There is no single
+# universal external BIOS file for the entire Arcade platform.
+# ------------------------------------------------------------
+
+pass "Arcade" "No single global BIOS requirement"
+
+
+# ------------------------------------------------------------
+# Neo Geo
+#
+# Standard MAME Neo Geo sets normally rely on neogeo.zip.
+# Stage 5B will inspect archive members rather than hashing the
+# complete ZIP, because ZIP metadata can change without the ROM
+# payload changing.
+# ------------------------------------------------------------
+
+if [[ -f "$ROOT/bios/neogeo/neogeo.zip" ]] || \
+   [[ -f "$ROOT/roms/neogeo/neogeo.zip" ]]
+then
+    pass "Neo Geo" "neogeo.zip present - archive verification pending"
+else
+    warn "Neo Geo" "neogeo.zip not found in bios/neogeo/ or roms/neogeo/"
+fi
+
+
+# ------------------------------------------------------------
+# Dreamcast
+#
+# BareFront keeps the user's original firmware in bios/dreamcast.
+# Flycast uses a writable copy of dc_flash.bin under saves/.
+# ------------------------------------------------------------
+
+DC_DIR="$ROOT/bios/dreamcast"
+DC_BOOT="$DC_DIR/dc_boot.bin"
+DC_FLASH="$DC_DIR/dc_flash.bin"
+DC_FLASH_WORK="$ROOT/saves/dreamcast/dc_flash.bin"
+
+if [[ -f "$DC_BOOT" && -f "$DC_FLASH" ]]; then
+
+    if [[ ! -f "$DC_FLASH_WORK" ]]; then
+
+        # Stage 5A may seed the working flash copy only when it
+        # does not already exist. It never overwrites a modified
+        # runtime flash file.
+        cp "$DC_FLASH" "$DC_FLASH_WORK"
+
+        pass "Dreamcast" "Firmware present; writable flash copy created"
+
+    else
+
+        pass "Dreamcast" "Boot ROM and source flash present"
+
+    fi
+
+else
+
+    missing=""
+
+    [[ -f "$DC_BOOT" ]] || missing="${missing} dc_boot.bin"
+    [[ -f "$DC_FLASH" ]] || missing="${missing} dc_flash.bin"
+
+    fail "Dreamcast" "Missing:${missing}"
+
+fi
+
+
+# ------------------------------------------------------------
+# Sega Saturn
+#
+# Mednafen's exact accepted BIOS variants will be validated in
+# Stage 5B. For now, presence of at least one Saturn firmware file
+# is enough to tell the user whether the folder is empty.
+# ------------------------------------------------------------
+
+SATURN_DIR="$ROOT/bios/saturn"
+
+if has_any_file "$SATURN_DIR"; then
+    pass "Saturn" "Firmware present - recognition pending"
+else
+    fail "Saturn" "BIOS missing - add firmware to bios/saturn/"
+fi
+
+
+# ------------------------------------------------------------
+# PC Engine
+#
+# Base PC Engine HuCard emulation does not require BIOS firmware.
+# CD titles need System Card firmware, but not every BareFront
+# PC Engine user will use CD games.
+# ------------------------------------------------------------
+
+PCENGINE_DIR="$ROOT/bios/pcengine"
+
+if has_any_file "$PCENGINE_DIR"; then
+    pass "PC Engine" "Optional CD/System Card firmware present"
+else
+    warn "PC Engine" "HuCards ready; CD games may need System Card firmware"
+fi
+
+
+# ------------------------------------------------------------
+# Amiga
+#
+# Amiberry supports numerous legitimate Kickstart versions.
+# Stage 5B will recognise known Kickstarts by checksum.
+# ------------------------------------------------------------
+
+AMIGA_DIR="$ROOT/bios/amiga"
+
+if has_any_file "$AMIGA_DIR"; then
+    pass "Amiga" "Kickstart/firmware file present - recognition pending"
+else
+    warn "Amiga" "No Kickstart found in bios/amiga/"
+fi
+
+
+# ------------------------------------------------------------
+# Summary
+# ------------------------------------------------------------
+
+TOTAL=$((OK + WARN + FAIL))
+
+echo
+echo "------------------------------------------------------------"
+echo "SUMMARY"
+echo "------------------------------------------------------------"
+echo
+
+printf "Ready / present : %d\n" "$OK"
+printf "Optional/warning: %d\n" "$WARN"
+printf "Missing required: %d\n" "$FAIL"
+printf "Systems checked : %d\n" "$TOTAL"
+
+echo
+
+if [[ "$FAIL" -eq 0 ]]; then
+
+    green "No required firmware is currently missing."
+    echo
+
+else
+
+    red "$FAIL required firmware check(s) need attention."
+    echo
+    echo
+    echo "Add legally obtained/dumped firmware to the folder shown"
+    echo "above, then simply run this checker again:"
+    echo
+    echo "  ./scripts/check_bios.sh"
+
+fi
+
+echo
+echo "BareFront never downloads copyrighted BIOS or firmware."
+echo
+
+# Missing required firmware is reported to the user, but the
+# checker itself exits normally so the installer can continue
+# and provide a complete readiness report.
+exit 0
+EOF
+
+
+chmod +x "$CHECK_BIOS_SCRIPT"
+
+if [[ ! -x "$CHECK_BIOS_SCRIPT" ]]; then
+    die "Could not create the BareFront firmware checker."
+fi
+
+echo "Firmware checker created:"
+echo "  $CHECK_BIOS_SCRIPT"
+
+
+# ------------------------------------------------------------
+# Syntax-check the generated checker before running it.
+# ------------------------------------------------------------
+
+echo
+echo "Checking firmware-checker syntax..."
+
+if bash -n "$CHECK_BIOS_SCRIPT"; then
+    echo "  Syntax: OK"
+else
+    die "Generated check_bios.sh contains a shell syntax error."
+fi
+
+
+# ------------------------------------------------------------
+# Run the checker now.
+#
+# This is informational. Missing user-supplied BIOS files should
+# not make a fresh BareFront installation itself fail.
+# ------------------------------------------------------------
+
+echo
+echo "Running initial firmware readiness check..."
+
+"$CHECK_BIOS_SCRIPT"
+
+echo
+echo "Stage 5A firmware readiness framework complete."
+
+
+# ============================================================
+# v0.12 checkpoint
+# ============================================================
+
+heading "INSTALLER v0.12 CHECKPOINT"
+
+echo "Completed:"
+echo "  Pre-flight checks"
+echo "  Common Debian dependencies"
+echo "  Production roms/bios/saves directory structure"
+echo "  Debian-managed emulator stage"
+echo "  MesenCE stable installation / verification"
+echo "  DuckStation stable AppImage installation / verification"
+echo "  PCSX2 stable AppImage installation / verification"
+echo "  Flycast stable AppImage installation / verification"
+echo "  Dreamcast BIOS/flash runtime layout"
+echo "  BigPEmu pinned stable installation / verification"
+echo "  bsnes v115 stable-source build / verification"
+echo "  Amiberry official Debian-package installation / integration"
+echo "  VICE BareFront launcher adapter"
+echo "  MAME Arcade / Neo Geo launcher adapter"
+echo "  Production barefront.ini generation / validation"
+echo "  Firmware readiness checker framework"
+echo
+echo "Mesen executable:"
+echo "  $MESEN_EXE"
+echo
+echo "Stage 3 emulator installation is complete."
+echo "Stage 4 production configuration generation is complete."
+echo "Stage 5A firmware readiness checking is complete."
+echo
+echo "Next:"
+echo "  Stage 5B: add verified firmware size / CRC32 / SHA-256"
+echo "  recognition tables and accepted legitimate variants."
+echo
+echo "Installer log:"
+echo "  $LOG_FILE"
+echo
