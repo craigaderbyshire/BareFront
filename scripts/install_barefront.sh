@@ -220,6 +220,8 @@ GRAPHICS_PACKAGES=(
     mesa-vulkan-drivers
     vulkan-tools
     libfuse2t64
+    libx11-dev
+    libxi-dev
 )
 
 ALL_PACKAGES=(
@@ -3389,6 +3391,51 @@ echo "BareFront executable verified:"
 echo "  $BAREFRONT_BINARY"
 echo
 echo "Stage 6 BareFront build complete."
+
+
+# ============================================================
+# STAGE 7 / CAPTURE HELPER
+# ============================================================
+
+heading "STAGE 7 / CAPTURE HELPER"
+
+CAPTURE_SOURCE="$BAREFRONT_DIR/src/capture_helper.cpp"
+CAPTURE_BINARY="$BAREFRONT_DIR/capture_helper"
+
+if [[ ! -f "$CAPTURE_SOURCE" ]]; then
+    die "Capture helper source is missing: $CAPTURE_SOURCE"
+fi
+
+if [[ ! -x "$CAPTURE_BINARY" || "$CAPTURE_SOURCE" -nt "$CAPTURE_BINARY" ]]; then
+
+    echo "Building BareFront capture helper..."
+
+    g++ -std=c++17 "$CAPTURE_SOURCE" -o "$CAPTURE_BINARY" \
+        $(sdl2-config --cflags --libs) \
+        -lX11 -lXi
+
+    echo "Action: BUILD"
+
+else
+
+    echo "Capture helper is already built and current."
+    echo "Action: SKIP"
+
+fi
+
+if [[ ! -x "$CAPTURE_BINARY" ]]; then
+    die "Capture helper build did not produce an executable: $CAPTURE_BINARY"
+fi
+
+echo
+echo "Capture helper verified:"
+echo "  $CAPTURE_BINARY"
+echo
+echo "Keyboard capture controls:"
+echo "  P = screenshot"
+echo "  R = 5-second video"
+echo
+echo "Stage 7 capture helper complete."
 
 
 # ============================================================
