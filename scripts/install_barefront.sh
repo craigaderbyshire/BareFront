@@ -3365,6 +3365,33 @@ echo "Stage 5A firmware readiness framework complete."
 
 
 # ============================================================
+# STAGE 6 / BUILD BAREFRONT
+# ============================================================
+
+heading "STAGE 6 / BUILD BAREFRONT"
+
+BUILD_SCRIPT="$BAREFRONT_DIR/scripts/build_barefront.sh"
+BAREFRONT_BINARY="$BAREFRONT_DIR/barefront"
+
+if [[ ! -x "$BUILD_SCRIPT" ]]; then
+    die "BareFront build script is missing or not executable: $BUILD_SCRIPT"
+fi
+
+echo "Building BareFront from source..."
+"$BUILD_SCRIPT"
+
+if [[ ! -x "$BAREFRONT_BINARY" ]]; then
+    die "BareFront build completed without producing an executable: $BAREFRONT_BINARY"
+fi
+
+echo
+echo "BareFront executable verified:"
+echo "  $BAREFRONT_BINARY"
+echo
+echo "Stage 6 BareFront build complete."
+
+
+# ============================================================
 # v0.12 checkpoint
 # ============================================================
 
