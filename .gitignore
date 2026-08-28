@@ -1,0 +1,32 @@
+# BareFront - files that must never be committed
+
+# Emulator binaries / downloaded applications
+emulators/
+
+# Copyrighted/user-supplied firmware
+bios/
+
+# User ROM libraries
+roms/
+testroms/
+
+# User save data
+saves/
+
+# Generated gameplay previews
+assets/videos/
+
+# Built BareFront executables
+/barefront
+/capture_helper
+
+# Machine-specific live configuration
+barefront.ini
+
+# Compiler / runtime leftovers
+*.o
+*.so
+*.log
+core
+archive/
+assets/games/

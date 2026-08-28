@@ -1,0 +1,103 @@
+# BareFront example configuration
+#
+# The installer will generate the real barefront.ini.
+# This file documents the expected format.
+#
+# {rom} is automatically replaced with the selected ROM path.
+# Do NOT quote {rom}; BareFront safely quotes it itself.
+
+[megadrive]
+roms=roms/megadrive
+screenshots=assets/games/megadrive
+emulator=/usr/games/blastem
+arguments={rom}
+
+[nes]
+roms=roms/nes
+screenshots=assets/games/nes
+emulator=emulators/mesen/Mesen
+arguments={rom}
+
+[snes]
+roms=roms/snes
+screenshots=assets/games/snes
+emulator=emulators/bsnes/bsnes
+arguments={rom}
+
+[ps1]
+roms=roms/ps1
+screenshots=assets/games/ps1
+emulator=emulators/duckstation/DuckStation.AppImage
+arguments=-batch -- {rom}
+
+[ps2]
+roms=roms/ps2
+screenshots=assets/games/ps2
+emulator=emulators/pcsx2/PCSX2.AppImage
+arguments=-batch {rom}
+
+[mastersystem]
+roms=roms/mastersystem
+screenshots=assets/games/mastersystem
+emulator=emulators/mesen/Mesen
+arguments={rom}
+
+[atari2600]
+roms=roms/atari2600
+screenshots=assets/games/atari2600
+emulator=/usr/bin/stella
+arguments={rom}
+
+[c64]
+roms=roms/c64
+screenshots=assets/games/c64
+emulator=/usr/bin/x64sc
+arguments=-basic bios/c64/basic-901226-01.bin -kernal bios/c64/kernal-901227-03.bin -chargen bios/c64/chargen-901225-01.bin -dos1541 bios/c64/dos1541-325302-01+901229-05.bin -drive8type 1541 -autostart {rom}
+
+[arcade]
+roms=roms/arcade
+screenshots=assets/games/arcade
+emulator=scripts/launch_mame.sh
+arguments={rom}
+
+[neogeo]
+roms=roms/neogeo
+screenshots=assets/games/neogeo
+emulator=scripts/launch_mame.sh
+arguments={rom}
+
+[dreamcast]
+roms=roms/dreamcast
+screenshots=assets/games/dreamcast
+emulator=emulators/flycast/Flycast.AppImage
+arguments={rom}
+
+[saturn]
+roms=roms/saturn
+screenshots=assets/games/saturn
+emulator=/usr/games/mednafen
+arguments=-force_module ss {rom}
+
+[pcengine]
+roms=roms/pcengine
+screenshots=assets/games/pcengine
+emulator=/usr/games/mednafen
+arguments=-force_module pce_fast {rom}
+
+[jaguar]
+roms=roms/jaguar
+screenshots=assets/games/jaguar
+emulator=emulators/bigpemu/bigpemu/bigpemu
+arguments={rom}
+
+[gamecube]
+roms=roms/gamecube
+screenshots=assets/games/gamecube
+emulator=/usr/games/dolphin-emu
+arguments=-b -e {rom}
+
+[amiga]
+roms=roms/amiga
+screenshots=assets/games/amiga
+emulator=/usr/bin/amiberry
+arguments=-G {rom}
