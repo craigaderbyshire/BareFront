@@ -46,7 +46,7 @@ arguments={rom}
 roms=roms/atari2600
 screenshots=assets/games/atari2600
 emulator=/usr/bin/stella
-arguments={rom}
+arguments=-basedir /home/USER/BareFront/saves/atari2600/stella {rom}
 
 [c64]
 roms=roms/c64

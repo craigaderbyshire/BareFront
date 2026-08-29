@@ -333,6 +333,52 @@ else
     ((FAILED_COUNT+=1))
 fi
 
+STELLA_BASE_DIR="$BAREFRONT_DIR/saves/atari2600/stella"
+STELLA_CONFIG="$STELLA_BASE_DIR/stella.sqlite3"
+
+mkdir -p "$STELLA_BASE_DIR"
+
+echo
+echo "Creating/verifying BareFront Stella baseline..."
+
+if [[ -f "$STELLA_CONFIG" ]]; then
+
+    echo "Existing Stella configuration found."
+    echo "BareFront will not overwrite it:"
+    echo "  $STELLA_CONFIG"
+    echo "Action: PRESERVE USER CONFIG"
+
+else
+
+    python3 - "$STELLA_CONFIG" <<'PYSTELLA'
+import sqlite3
+import sys
+from pathlib import Path
+
+db = Path(sys.argv[1])
+
+con = sqlite3.connect(db)
+con.execute(
+    "CREATE TABLE settings "
+    "(setting TEXT PRIMARY KEY, value TEXT) WITHOUT ROWID"
+)
+con.execute(
+    "INSERT INTO settings(setting, value) VALUES (?, ?)",
+    ("stella.version", "7.0")
+)
+con.commit()
+con.close()
+PYSTELLA
+
+    echo "BareFront Stella baseline created:"
+    echo "  $STELLA_CONFIG"
+    echo
+    echo "  What's New popup: suppressed"
+    echo "  Save states: $STELLA_BASE_DIR/state"
+    echo "  Action: CREATE BASELINE"
+
+fi
+
 
 # ------------------------------------------------------------
 # Mednafen - Saturn + PC Engine
@@ -3121,7 +3167,7 @@ arguments={rom}
 roms=roms/atari2600
 screenshots=assets/games/atari2600
 emulator=/usr/bin/stella
-arguments={rom}
+arguments=-basedir $STELLA_BASE_DIR {rom}
 
 [c64]
 roms=roms/c64
@@ -3343,6 +3389,103 @@ PYMIGRATE
         echo
         echo "Previous configuration backed up to:"
         echo "  $BLASTEM_MIGRATION_BACKUP"
+    fi
+
+fi
+
+
+
+# ------------------------------------------------------------
+# Stella production-config migration
+#
+# Older BareFront production configs launched Stella directly
+# with only {rom}. Stella 7.0 is now given a BareFront-managed
+# base directory so its configuration and save states remain
+# under the BareFront tree.
+#
+# Only the exact old BareFront-generated Atari 2600 settings are
+# changed. Custom configurations are preserved.
+# ------------------------------------------------------------
+
+STELLA_MIGRATION_BACKUP="$LOG_DIR/barefront.ini.pre-stella-migration"
+
+if [[ -f "$CONFIG_FILE" ]] &&
+   ! grep -Eq '^roms=testroms/' "$CONFIG_FILE"
+then
+
+    STELLA_MIGRATION_RESULT="$(
+        python3 - "$CONFIG_FILE" "$STELLA_BASE_DIR" "$STELLA_MIGRATION_BACKUP" <<'PYSTELLAMIGRATE'
+from pathlib import Path
+import shutil
+import sys
+
+config = Path(sys.argv[1])
+base_dir = sys.argv[2]
+backup = Path(sys.argv[3])
+
+lines = config.read_text().splitlines()
+
+in_atari = False
+emulator_index = None
+arguments_index = None
+
+for index, line in enumerate(lines):
+    stripped = line.strip()
+
+    if stripped.startswith("[") and stripped.endswith("]"):
+        if in_atari:
+            break
+        in_atari = stripped == "[atari2600]"
+        continue
+
+    if not in_atari:
+        continue
+
+    if stripped.startswith("emulator="):
+        emulator_index = index
+    elif stripped.startswith("arguments="):
+        arguments_index = index
+
+if emulator_index is None or arguments_index is None:
+    print("NO_CHANGE")
+    raise SystemExit(0)
+
+if lines[emulator_index].strip() != "emulator=/usr/bin/stella":
+    print("NO_CHANGE")
+    raise SystemExit(0)
+
+if lines[arguments_index].strip() != "arguments={rom}":
+    print("NO_CHANGE")
+    raise SystemExit(0)
+
+backup.parent.mkdir(parents=True, exist_ok=True)
+
+if not backup.exists():
+    shutil.copy2(config, backup)
+
+indent = lines[arguments_index][
+    :len(lines[arguments_index]) - len(lines[arguments_index].lstrip())
+]
+
+lines[arguments_index] = (
+    f"{indent}arguments=-basedir {base_dir} {{rom}}"
+)
+
+config.write_text("\n".join(lines) + "\n")
+
+print("MIGRATED")
+PYSTELLAMIGRATE
+    )"
+
+    if [[ "$STELLA_MIGRATION_RESULT" == "MIGRATED" ]]; then
+        echo
+        echo "Migrated legacy Atari 2600 Stella arguments:"
+        echo "  arguments={rom}"
+        echo "    ->"
+        echo "  arguments=-basedir $STELLA_BASE_DIR {rom}"
+        echo
+        echo "Previous configuration backed up to:"
+        echo "  $STELLA_MIGRATION_BACKUP"
     fi
 
 fi
