@@ -320,23 +320,6 @@ SKIPPED_SPECIAL=0
 
 
 # ------------------------------------------------------------
-# BlastEm - Mega Drive
-# Debian package: blastem
-# Expected Debian 13 executable: /usr/games/blastem
-# ------------------------------------------------------------
-
-if install_debian_emulator \
-    "Mega Drive / BlastEm" \
-    "blastem" \
-    "/usr/games/blastem"
-then
-    ((SUCCESS_COUNT+=1))
-else
-    ((FAILED_COUNT+=1))
-fi
-
-
-# ------------------------------------------------------------
 # Stella - Atari 2600
 # ------------------------------------------------------------
 
@@ -560,7 +543,6 @@ echo
 
 echo "Expected executable paths:"
 echo
-echo "  BlastEm   /usr/games/blastem"
 echo "  Stella    /usr/bin/stella"
 echo "  Mednafen  /usr/games/mednafen"
 echo "  MAME      /usr/games/mame"
@@ -589,7 +571,307 @@ echo
 
 # ============================================================
 # Stage 3B - Locally managed emulators
-# Part 1: Mesen Community Edition
+# BlastEm - Mega Drive
+# ============================================================
+
+heading "STAGE 3B / BLASTEM"
+
+# BlastEm's official stable release is considerably older than
+# the current upstream code. BareFront pins this exact upstream
+# build because it provides the separate ui.menu / ui.exit
+# behaviour required for clean Esc -> BareFront operation.
+#
+# This build has been manually validated with BareFront.
+BLASTEM_VERSION="0.6.3-pre-8013468ed981"
+BLASTEM_ARCHIVE="blastem64-$BLASTEM_VERSION.tar.gz"
+BLASTEM_URL="https://www.retrodev.com/blastem/nightlies/$BLASTEM_ARCHIVE"
+BLASTEM_SHA256="26539e1efe89aea1d79663372856e40fe874fa141517276bedc47c0c476604c8"
+BLASTEM_EXE_SHA256="3c154213a1e98c492234e17b4ad4191b86c733bb80dd09ad352c556c7f9b18d4"
+
+BLASTEM_DIR="$BAREFRONT_DIR/emulators/blastem"
+BLASTEM_EXE="$BLASTEM_DIR/blastem"
+BLASTEM_VERSION_FILE="$BLASTEM_DIR/VERSION.txt"
+BLASTEM_HASH_FILE="$BLASTEM_DIR/BINARY_SHA256.txt"
+
+BLASTEM_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/blastem"
+BLASTEM_CONFIG="$BLASTEM_CONFIG_DIR/blastem.cfg"
+
+echo "BareFront uses BlastEm for:"
+echo "  Mega Drive"
+echo
+echo "Pinned tested build:"
+echo "  $BLASTEM_VERSION"
+echo
+echo "Install location:"
+echo "  $BLASTEM_DIR"
+echo
+
+if [[ -x "$BLASTEM_EXE" ]]; then
+
+    EXISTING_BLASTEM_HASH="$(
+        sha256sum "$BLASTEM_EXE" | awk '{print $1}'
+    )"
+
+    if [[ "$EXISTING_BLASTEM_HASH" != "$BLASTEM_EXE_SHA256" ]]; then
+        echo "Existing managed BlastEm executable:"
+        echo "  $BLASTEM_EXE"
+        echo
+        echo "Expected SHA-256:"
+        echo "  $BLASTEM_EXE_SHA256"
+        echo "Found SHA-256:"
+        echo "  $EXISTING_BLASTEM_HASH"
+        echo
+        die "BareFront will not overwrite or trust a different BlastEm build automatically."
+    fi
+
+    # The binary itself exactly matches the pinned tested build.
+    # Metadata may legitimately be absent on an installation made
+    # by an earlier BareFront installer, so recreate it safely.
+    printf '%s\n' "$BLASTEM_VERSION" > "$BLASTEM_VERSION_FILE"
+    printf '%s\n' "$BLASTEM_EXE_SHA256" > "$BLASTEM_HASH_FILE"
+
+    echo "Pinned BlastEm build is already installed."
+    echo "Executable:"
+    echo "  $BLASTEM_EXE"
+    echo "SHA-256: OK"
+    echo "Action: SKIP"
+
+else
+
+    if [[ -d "$BLASTEM_DIR" ]] &&
+       [[ -n "$(find "$BLASTEM_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]
+    then
+        die "A non-empty unrecognised BlastEm directory already exists: $BLASTEM_DIR"
+    fi
+
+    TEMP_DIR="$(mktemp -d)"
+    TEMP_ARCHIVE="$TEMP_DIR/$BLASTEM_ARCHIVE"
+    TEMP_EXTRACT="$TEMP_DIR/extract"
+
+    mkdir -p "$TEMP_EXTRACT"
+
+    echo "Downloading pinned BlastEm build..."
+
+    if ! curl -fL --progress-bar \
+        "$BLASTEM_URL" \
+        -o "$TEMP_ARCHIVE"
+    then
+        rm -rf "$TEMP_DIR"
+        die "BlastEm download failed."
+    fi
+
+    echo
+    echo "Verifying BlastEm SHA-256..."
+
+    ACTUAL_BLASTEM_SHA256="$(
+        sha256sum "$TEMP_ARCHIVE" | awk '{print $1}'
+    )"
+
+    if [[ "$ACTUAL_BLASTEM_SHA256" != "$BLASTEM_SHA256" ]]; then
+        echo "Expected:"
+        echo "  $BLASTEM_SHA256"
+        echo "Received:"
+        echo "  $ACTUAL_BLASTEM_SHA256"
+        rm -rf "$TEMP_DIR"
+        die "BlastEm archive SHA-256 verification failed."
+    fi
+
+    echo "SHA-256: OK"
+    echo
+    echo "Extracting BlastEm..."
+
+    if ! tar -xzf "$TEMP_ARCHIVE" -C "$TEMP_EXTRACT"; then
+        rm -rf "$TEMP_DIR"
+        die "Could not extract BlastEm archive."
+    fi
+
+    FOUND_BLASTEM="$(
+        find "$TEMP_EXTRACT" \
+            -type f \
+            -name blastem \
+            -print \
+            -quit
+    )"
+
+    if [[ -z "$FOUND_BLASTEM" ]] || [[ ! -x "$FOUND_BLASTEM" ]]; then
+        rm -rf "$TEMP_DIR"
+        die "BlastEm executable was not found in the extracted archive."
+    fi
+
+    FOUND_BLASTEM_ROOT="$(dirname "$FOUND_BLASTEM")"
+
+    mkdir -p "$BLASTEM_DIR"
+
+    # Preserve the complete upstream release directory:
+    # executable, default.cfg, systems.cfg, shaders,
+    # controller database, menu ROM and bundled libraries.
+    cp -a "$FOUND_BLASTEM_ROOT"/. "$BLASTEM_DIR"/
+
+    chmod +x "$BLASTEM_EXE"
+
+    INSTALLED_BLASTEM_HASH="$(
+        sha256sum "$BLASTEM_EXE" | awk '{print $1}'
+    )"
+
+    if [[ "$INSTALLED_BLASTEM_HASH" != "$BLASTEM_EXE_SHA256" ]]; then
+        rm -rf "$TEMP_DIR"
+        die "Extracted BlastEm executable SHA-256 verification failed."
+    fi
+
+    printf '%s\n' "$BLASTEM_VERSION" > "$BLASTEM_VERSION_FILE"
+    printf '%s\n' "$BLASTEM_EXE_SHA256" > "$BLASTEM_HASH_FILE"
+
+    rm -rf "$TEMP_DIR"
+
+    echo "Executable SHA-256: OK"
+    echo "Action: INSTALL"
+
+fi
+
+echo
+echo "Verifying BlastEm..."
+
+if [[ ! -x "$BLASTEM_EXE" ]]; then
+    die "BlastEm executable verification failed: $BLASTEM_EXE"
+fi
+
+FINAL_BLASTEM_HASH="$(
+    sha256sum "$BLASTEM_EXE" | awk '{print $1}'
+)"
+
+if [[ "$FINAL_BLASTEM_HASH" != "$BLASTEM_EXE_SHA256" ]]; then
+    die "Installed BlastEm executable does not match the pinned BareFront build."
+fi
+
+if [[ ! -f "$BLASTEM_VERSION_FILE" ]] ||
+   [[ "$(cat "$BLASTEM_VERSION_FILE")" != "$BLASTEM_VERSION" ]]
+then
+    die "BlastEm version metadata verification failed."
+fi
+
+if [[ ! -f "$BLASTEM_HASH_FILE" ]] ||
+   [[ "$(cat "$BLASTEM_HASH_FILE")" != "$BLASTEM_EXE_SHA256" ]]
+then
+    die "BlastEm executable metadata verification failed."
+fi
+
+echo "Executable: OK"
+echo "  $BLASTEM_EXE"
+echo "Version:"
+echo "  $BLASTEM_VERSION"
+echo "SHA-256:"
+echo "  $FINAL_BLASTEM_HASH"
+
+
+# ------------------------------------------------------------
+# BareFront BlastEm baseline configuration
+# ------------------------------------------------------------
+
+echo
+echo "Configuring BareFront BlastEm baseline..."
+
+if [[ ! -f "$BLASTEM_CONFIG" ]]; then
+
+    if [[ ! -f "$BLASTEM_DIR/default.cfg" ]]; then
+        die "BlastEm default.cfg is missing: $BLASTEM_DIR/default.cfg"
+    fi
+
+    mkdir -p "$BLASTEM_CONFIG_DIR"
+
+    cp "$BLASTEM_DIR/default.cfg" "$BLASTEM_CONFIG"
+
+    python3 - "$BLASTEM_CONFIG" <<'PYBLASTEM'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+lines = path.read_text().splitlines()
+
+out = []
+exit_binding_written = False
+save_path_written = False
+
+for line in lines:
+    stripped = line.strip()
+    indent = line[:len(line) - len(line.lstrip())]
+
+    # BareFront owns P = screenshot.
+    if re.fullmatch(r"p\s+ui\.screenshot", stripped):
+        continue
+
+    # BareFront owns R = 5-second recording.
+    if re.fullmatch(r"r\s+ui\.release_mouse", stripped):
+        continue
+
+    # Avoid an existing F1 menu/exit mapping before adding ours.
+    if re.fullmatch(r"f1\s+ui\.(menu|exit)", stripped):
+        continue
+
+    # Esc must quit BlastEm immediately and return to BareFront.
+    if re.fullmatch(r"esc\s+ui\.(menu|exit)", stripped):
+        out.append(f"{indent}esc ui.exit")
+        out.append(f"{indent}f1 ui.menu")
+        exit_binding_written = True
+        continue
+
+    # Keep Mega Drive saves inside the BareFront installation.
+    if stripped.startswith("save_path "):
+        out.append(
+            f"{indent}save_path $HOME/BareFront/saves/megadrive/$ROMNAME"
+        )
+        save_path_written = True
+        continue
+
+    out.append(line)
+
+if not exit_binding_written:
+    raise SystemExit("BlastEm Esc binding was not found in default.cfg")
+
+if not save_path_written:
+    raise SystemExit("BlastEm save_path was not found in default.cfg")
+
+path.write_text("\n".join(out) + "\n")
+PYBLASTEM
+
+    echo "BareFront baseline config created:"
+    echo "  $BLASTEM_CONFIG"
+    echo
+    echo "Controls:"
+    echo "  Esc = exit directly to BareFront"
+    echo "  F1  = BlastEm menu"
+    echo "  P   = reserved for BareFront screenshot"
+    echo "  R   = reserved for BareFront video capture"
+    echo
+    echo "Mega Drive saves:"
+    echo '  $HOME/BareFront/saves/megadrive/$ROMNAME'
+    echo "Action: CREATE BASELINE"
+
+else
+
+    echo "Existing BlastEm user configuration found:"
+    echo "  $BLASTEM_CONFIG"
+    echo
+    echo "BareFront will preserve it unchanged."
+    echo "Action: PRESERVE USER CONFIG"
+
+    if ! grep -Eq '^[[:space:]]*esc[[:space:]]+ui\.exit[[:space:]]*$' \
+        "$BLASTEM_CONFIG"
+    then
+        echo
+        echo "NOTE: Existing BlastEm config does not map Esc to ui.exit."
+        echo "BareFront has deliberately not overwritten the user's mapping."
+    fi
+
+fi
+
+echo
+echo "BlastEm stage complete."
+
+
+# ============================================================
+# Stage 3B - Locally managed emulators
+# Mesen Community Edition
 # ============================================================
 
 heading "STAGE 3B / MESEN"
@@ -2700,7 +2982,7 @@ cat > "$TEMP_CONFIG" <<EOF
 [megadrive]
 roms=roms/megadrive
 screenshots=assets/games/megadrive
-emulator=/usr/games/blastem
+emulator=$BLASTEM_EXE
 arguments={rom}
 
 [nes]

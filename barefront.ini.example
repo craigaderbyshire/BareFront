@@ -9,7 +9,7 @@
 [megadrive]
 roms=roms/megadrive
 screenshots=assets/games/megadrive
-emulator=/usr/games/blastem
+emulator=emulators/blastem/blastem
 arguments={rom}
 
 [nes]
