@@ -3185,7 +3185,7 @@ echo
 BLASTEM_MIGRATION_BACKUP="$LOG_DIR/barefront.ini.pre-blastem-migration"
 
 if [[ -f "$CONFIG_FILE" ]] &&
-   ! grep -q 'testroms/' "$CONFIG_FILE"
+   ! grep -Eq '^roms=testroms/' "$CONFIG_FILE"
 then
 
     BLASTEM_MIGRATION_RESULT="$(
@@ -3298,7 +3298,7 @@ LIVE_SECTION_COUNT="$(
 
 echo "  Sections found: $LIVE_SECTION_COUNT"
 
-if grep -q 'testroms/' "$CONFIG_FILE"; then
+if grep -Eq '^roms=testroms/' "$CONFIG_FILE"; then
 
     echo
     echo "NOTE: The existing live configuration still contains"
