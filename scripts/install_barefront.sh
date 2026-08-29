@@ -878,7 +878,18 @@ heading "STAGE 3B / MESEN"
 
 MESEN_DIR="$BAREFRONT_DIR/emulators/mesen"
 MESEN_EXE="$MESEN_DIR/Mesen"
-MESEN_API="https://api.github.com/repos/nesdev-org/MesenCE/releases/latest"
+
+# BareFront-tested MesenCE release.
+MESEN_VERSION="2.2.1"
+MESEN_CONFIG_UPGRADE="5"
+MESEN_ASSET_NAME_EXPECTED="Mesen_2.2.1_Linux_x64.zip"
+MESEN_EXPECTED_SHA256="c88ff4d251b407515c43d3332d641927655cd69fb538996b6a21da4509dbb58f"
+
+MESEN_API="https://api.github.com/repos/nesdev-org/MesenCE/releases/tags/$MESEN_VERSION"
+
+MESEN_CONFIG_DIR="$HOME/.config/MesenCE"
+MESEN_CONFIG="$MESEN_CONFIG_DIR/settings.json"
+MESEN_SAVE_DIR="$BAREFRONT_DIR/saves/mesen"
 
 echo "BareFront uses Mesen for:"
 echo "  NES"
@@ -888,18 +899,31 @@ echo "Install location:"
 echo "  $MESEN_DIR"
 echo
 
-if [[ -x "$MESEN_EXE" ]]; then
+MESEN_INSTALLED_RELEASE="$(
+    sed -n 's/^Release: //p' "$MESEN_DIR/VERSION.txt" 2>/dev/null         | head -1 || true
+)"
 
-    echo "Mesen is already installed."
+if [[ -x "$MESEN_EXE" &&
+      "$MESEN_INSTALLED_RELEASE" == "$MESEN_VERSION" ]]; then
+
+    echo "Pinned MesenCE release is already installed."
+    echo "Release:"
+    echo "  $MESEN_INSTALLED_RELEASE"
     echo "Executable:"
     echo "  $MESEN_EXE"
     echo "Action: SKIP"
 
 else
 
+    if [[ -x "$MESEN_EXE" ]]; then
+        echo "Existing Mesen installation is not the BareFront-pinned release."
+        echo "Action: INSTALL PINNED RELEASE"
+        echo
+    fi
+
     mkdir -p "$MESEN_DIR"
 
-    echo "Asking GitHub for the latest stable MesenCE release..."
+    echo "Requesting BareFront-pinned MesenCE release from GitHub..."
     echo
 
     # curl:
@@ -908,73 +932,41 @@ else
     #   -S = still show an error if something fails
     #   -L = follow redirects
     #
-    # The GitHub /releases/latest endpoint returns the newest
-    # normal release, not a nightly development build.
+    # BareFront requests the exact tested release tag rather than
+    # following MesenCE's latest release automatically.
     if ! MESEN_RELEASE_JSON="$(curl -fsSL "$MESEN_API")"; then
         die "Could not retrieve the latest stable MesenCE release information."
     fi
 
-    MESEN_VERSION="$(
+    MESEN_RELEASE_TAG="$(
         printf '%s' "$MESEN_RELEASE_JSON" \
         | jq -r '.tag_name // empty'
     )"
 
-    if [[ -z "$MESEN_VERSION" ]]; then
-        die "GitHub did not return a MesenCE release version."
+    if [[ "$MESEN_RELEASE_TAG" != "$MESEN_VERSION" ]]; then
+        die "GitHub did not return the pinned MesenCE release."
     fi
 
-    echo "Latest stable release:"
+    echo "Pinned stable release:"
     echo "  $MESEN_VERSION"
     echo
 
-    # Prefer a native Linux x64 release asset.
-    #
-    # We explicitly reject:
-    #   ARM builds
-    #   Windows builds
-    #   macOS builds
-    #   development/nightly artifacts
-    #
-    # If no suitable native asset is found, an official stable
-    # x64 AppImage is accepted as the fallback.
+    # --------------------------------------------------------
+    # Select the exact BareFront-tested Linux x64 archive.
+    # --------------------------------------------------------
+
     MESEN_ASSET_JSON="$(
         printf '%s' "$MESEN_RELEASE_JSON" \
-        | jq -c '
+        | jq -c --arg asset "$MESEN_ASSET_NAME_EXPECTED" '
             [
               .assets[]
-              | select(.name | test("linux"; "i"))
-              | select(.name | test("x64|x86_64"; "i"))
-              | select((.name | test("arm"; "i")) | not)
-              | select((.name | test("appimage"; "i")) | not)
+              | select(.name == $asset)
             ][0] // empty
           '
     )"
 
     if [[ -z "$MESEN_ASSET_JSON" ]]; then
-        echo "No native x64 asset was found."
-        echo "Looking for the official stable x64 AppImage instead..."
-
-        MESEN_ASSET_JSON="$(
-            printf '%s' "$MESEN_RELEASE_JSON" \
-            | jq -c '
-                [
-                  .assets[]
-                  | select(.name | test("linux"; "i"))
-                  | select(.name | test("x64|x86_64"; "i"))
-                  | select(.name | test("appimage"; "i"))
-                  | select((.name | test("arm"; "i")) | not)
-                ][0] // empty
-              '
-        )"
-    fi
-
-    if [[ -z "$MESEN_ASSET_JSON" ]]; then
-        echo
-        echo "GitHub release assets returned:"
-        printf '%s' "$MESEN_RELEASE_JSON" \
-            | jq -r '.assets[]?.name' \
-            | sed 's/^/  /'
-        die "Could not identify a suitable stable MesenCE Linux x64 download."
+        die "Could not find the BareFront-tested MesenCE Linux x64 archive."
     fi
 
     MESEN_ASSET_NAME="$(
@@ -996,6 +988,10 @@ else
     echo "Selected release asset:"
     echo "  $MESEN_ASSET_NAME"
 
+    if [[ "$MESEN_ASSET_NAME" != "$MESEN_ASSET_NAME_EXPECTED" ]]; then
+        die "GitHub did not return the expected BareFront-tested MesenCE asset."
+    fi
+
     TEMP_DIR="$(mktemp -d)"
     TEMP_DOWNLOAD="$TEMP_DIR/mesen-download"
 
@@ -1009,6 +1005,25 @@ else
         rm -rf "$TEMP_DIR"
         die "MesenCE download failed."
     fi
+
+    # --------------------------------------------------------
+    # BareFront pinned SHA-256 verification.
+    #
+    # This is the exact Linux x64 archive accepted during
+    # BareFront integration testing.
+    # --------------------------------------------------------
+
+    ACTUAL_PINNED_SHA256="$(sha256sum "$TEMP_DOWNLOAD" | awk '{print $1}')"
+
+    echo
+    echo "Checking BareFront pinned SHA-256..."
+
+    if [[ "$ACTUAL_PINNED_SHA256" != "$MESEN_EXPECTED_SHA256" ]]; then
+        rm -rf "$TEMP_DIR"
+        die "MesenCE does not match the BareFront-tested SHA-256."
+    fi
+
+    echo "  SHA-256: OK"
 
     # --------------------------------------------------------
     # Verify SHA-256 when GitHub publishes one for the asset.
@@ -1122,6 +1137,93 @@ if [[ -f "$MESEN_DIR/VERSION.txt" ]]; then
     echo
     echo "BareFront install record:"
     sed 's/^/  /' "$MESEN_DIR/VERSION.txt"
+fi
+
+echo
+echo "Creating/verifying BareFront MesenCE baseline..."
+
+mkdir -p "$MESEN_SAVE_DIR"
+
+if [[ -f "$MESEN_CONFIG" ]]; then
+
+    echo "Existing MesenCE user configuration found."
+    echo "BareFront will not overwrite it:"
+    echo "  $MESEN_CONFIG"
+    echo "Action: PRESERVE USER CONFIG"
+
+else
+
+    mkdir -p "$MESEN_CONFIG_DIR"
+
+    python3 - "$MESEN_CONFIG" "$MESEN_SAVE_DIR" "$MESEN_VERSION" "$MESEN_CONFIG_UPGRADE" <<'PYMESEN'
+import json
+import sys
+from pathlib import Path
+
+config = Path(sys.argv[1])
+save_dir = sys.argv[2]
+version = sys.argv[3]
+config_upgrade = int(sys.argv[4])
+
+data = {
+    "Version": version,
+    "ConfigUpgrade": config_upgrade,
+    "Preferences": {
+        "AutomaticallyCheckForUpdates": False,
+
+        "OverrideSaveDataFolder": True,
+        "SaveDataFolder": save_dir,
+
+        "OverrideSaveStateFolder": True,
+        "SaveStateFolder": save_dir,
+
+        "ShortcutKeys": [
+            {
+                "Shortcut": "TakeScreenshot",
+                "KeyCombination": {
+                    "Key1": 0,
+                    "Key2": 0,
+                    "Key3": 0
+                },
+                "KeyCombination2": {
+                    "Key1": 0,
+                    "Key2": 0,
+                    "Key3": 0
+                }
+            },
+            {
+                "Shortcut": "Exit",
+                "KeyCombination": {
+                    "Key1": 13,
+                    "Key2": 0,
+                    "Key3": 0
+                },
+                "KeyCombination2": {
+                    "Key1": 0,
+                    "Key2": 0,
+                    "Key3": 0
+                }
+            }
+        ]
+    }
+}
+
+config.write_text(
+    json.dumps(data, indent=2),
+    encoding="utf-8-sig"
+)
+PYMESEN
+
+    echo "BareFront MesenCE baseline created:"
+    echo "  $MESEN_CONFIG"
+    echo
+    echo "  First-run wizard: suppressed"
+    echo "  Automatic updates: OFF"
+    echo "  Esc: exit to BareFront"
+    echo "  Mesen screenshot hotkey: unassigned"
+    echo "  Save directory: $MESEN_SAVE_DIR"
+    echo "  Action: CREATE BASELINE"
+
 fi
 
 echo
