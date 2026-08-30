@@ -20,6 +20,25 @@ SET_NAME="${ROM_FILE%.*}"
 # BareFront MAME-backed system libraries and BIOS directories.
 ROMPATH="$ROM_DIR;$ROOT/roms/arcade;$ROOT/roms/neogeo;$ROOT/bios/arcade;$ROOT/bios/neogeo"
 
+case "$ROM" in
+    "$ROOT"/roms/neogeo/*|roms/neogeo/*|./roms/neogeo/*)
+        SAVE_ROOT="$ROOT/saves/neogeo/mame"
+        ;;
+    *)
+        SAVE_ROOT="$ROOT/saves/arcade/mame"
+        ;;
+esac
+
+mkdir -p \
+    "$SAVE_ROOT/cfg" \
+    "$SAVE_ROOT/nvram" \
+    "$SAVE_ROOT/states" \
+    "$SAVE_ROOT/input"
+
 exec /usr/games/mame \
     "$SET_NAME" \
-    -rompath "$ROMPATH"
+    -rompath "$ROMPATH" \
+    -cfg_directory "$SAVE_ROOT/cfg" \
+    -nvram_directory "$SAVE_ROOT/nvram" \
+    -state_directory "$SAVE_ROOT/states" \
+    -input_directory "$SAVE_ROOT/input"
