@@ -2646,6 +2646,59 @@ else
     echo "  This is not treated as a fatal installer error."
 fi
 
+# ------------------------------------------------------------
+# BareFront bsnes baseline
+#
+# bsnes expands this minimal BML profile itself on first launch.
+# BareFront supplies only the settings required for integration:
+#   - SRAM saves under BareFront
+#   - save states under BareFront
+#   - Esc quits bsnes completely
+#
+# Renderer, audio and other emulator settings remain bsnes-owned.
+# ------------------------------------------------------------
+
+BSNES_CONFIG_DIR="$HOME/.config/bsnes"
+BSNES_CONFIG="$BSNES_CONFIG_DIR/settings.bml"
+BSNES_SAVE_DIR="$BAREFRONT_DIR/saves/snes"
+BSNES_STATE_DIR="$BSNES_SAVE_DIR/states"
+
+mkdir -p "$BSNES_SAVE_DIR" "$BSNES_STATE_DIR"
+
+echo
+echo "Creating/verifying BareFront bsnes baseline..."
+
+if [[ -f "$BSNES_CONFIG" ]]; then
+
+    echo "Existing bsnes user configuration found."
+    echo "BareFront will not overwrite it:"
+    echo "  $BSNES_CONFIG"
+    echo "Action: PRESERVE USER CONFIG"
+
+else
+
+    mkdir -p "$BSNES_CONFIG_DIR"
+
+    cat > "$BSNES_CONFIG" <<EOF
+Path
+  Saves: $BSNES_SAVE_DIR/
+  States: $BSNES_STATE_DIR/
+
+Hotkey
+  QuitEmulator: 0x1/0/0
+EOF
+
+    echo "BareFront bsnes baseline created:"
+    echo "  $BSNES_CONFIG"
+    echo
+    echo "  Esc: exit directly to BareFront"
+    echo "  SRAM saves: $BSNES_SAVE_DIR/"
+    echo "  Save states: $BSNES_STATE_DIR/"
+    echo "  Renderer: bsnes default"
+    echo "  Action: CREATE BASELINE"
+
+fi
+
 echo
 echo "No SNES BIOS is required for ordinary cartridge games."
 echo
