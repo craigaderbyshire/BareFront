@@ -3033,9 +3033,12 @@ heading "STAGE 4 / PRODUCTION CONFIGURATION"
 CONFIG_FILE="$BAREFRONT_DIR/barefront.ini"
 CONFIG_CONFLICT="$LOG_DIR/barefront.ini.generated"
 VICE_LAUNCHER="$BAREFRONT_DIR/scripts/launch_vice.sh"
+VICE_HOTKEY_DIR="$BAREFRONT_DIR/emulators/vice"
+VICE_HOTKEY_FILE="$VICE_HOTKEY_DIR/barefront.vhk"
 MAME_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mame.sh"
 
 mkdir -p "$BAREFRONT_DIR/scripts"
+mkdir -p "$VICE_HOTKEY_DIR"
 
 
 # ------------------------------------------------------------
@@ -3056,6 +3059,24 @@ mkdir -p "$BAREFRONT_DIR/scripts"
 
 echo "Creating/verifying C64 VICE launcher..."
 
+VICE_DEFAULT_HOTKEYS="/usr/share/vice/hotkeys/hotkeys.vhk"
+
+if [[ ! -f "$VICE_DEFAULT_HOTKEYS" ]]; then
+    die "VICE default hotkey file is missing: $VICE_DEFAULT_HOTKEYS"
+fi
+
+cp "$VICE_DEFAULT_HOTKEYS" "$VICE_HOTKEY_FILE"
+
+cat >> "$VICE_HOTKEY_FILE" <<'EOF'
+
+# BareFront integration
+quit    Escape
+EOF
+
+echo "  BareFront VICE hotkeys: OK"
+echo "  $VICE_HOTKEY_FILE"
+echo "  Esc: exit directly to BareFront"
+
 cat > "$VICE_LAUNCHER" <<'EOF'
 #!/bin/bash
 
@@ -3070,6 +3091,8 @@ if [[ -z "$ROM" ]]; then
 fi
 
 exec /usr/bin/x64sc \
+    -hotkeyfile "$ROOT/emulators/vice/barefront.vhk" \
+    +confirmonexit \
     -basic "$ROOT/bios/c64/basic-901226-01.bin" \
     -kernal "$ROOT/bios/c64/kernal-901227-03.bin" \
     -chargen "$ROOT/bios/c64/chargen-901225-01.bin" \

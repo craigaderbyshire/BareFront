@@ -11,6 +11,8 @@ if [[ -z "$ROM" ]]; then
 fi
 
 exec /usr/bin/x64sc \
+    -hotkeyfile "$ROOT/emulators/vice/barefront.vhk" \
+    +confirmonexit \
     -basic "$ROOT/bios/c64/basic-901226-01.bin" \
     -kernal "$ROOT/bios/c64/kernal-901227-03.bin" \
     -chargen "$ROOT/bios/c64/chargen-901225-01.bin" \
