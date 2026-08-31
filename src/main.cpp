@@ -10,6 +10,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <atomic>
 #include <cstdio>
 #include <cstdint>
@@ -164,6 +165,114 @@ std::string cleanGameTitle(
     return cleaned;
 }
 
+
+
+// --------------------------------------------------
+// MAME display titles
+//
+// Arcade and Neo Geo ROM archives use MAME set names such
+// as "pacman" and "mslug".  Those names must remain unchanged
+// for launching, screenshots and video filenames.
+//
+// When a MAME-backed system opens, BareFront asks MAME for
+// the human-readable descriptions once and caches them.
+// --------------------------------------------------
+
+std::string shellQuote(
+    const std::string& text);
+
+
+std::unordered_map<std::string, std::string>
+loadMameDisplayTitles(
+    const std::vector<fs::path>& games)
+{
+    std::unordered_map<std::string, std::string>
+        titles;
+
+    if (games.empty())
+        return titles;
+
+    std::string command =
+        "/usr/games/mame -listfull";
+
+    for (const auto& game : games)
+    {
+        command +=
+            " " +
+            shellQuote(
+                game.stem().string()
+            );
+    }
+
+    command +=
+        " 2>/dev/null";
+
+    FILE* pipe =
+        popen(
+            command.c_str(),
+            "r"
+        );
+
+    if (!pipe)
+        return titles;
+
+    char buffer[4096];
+
+    while (fgets(
+               buffer,
+               sizeof(buffer),
+               pipe))
+    {
+        std::string line =
+            buffer;
+
+        std::size_t quoteStart =
+            line.find('"');
+
+        std::size_t quoteEnd =
+            line.rfind('"');
+
+        if (quoteStart ==
+                std::string::npos ||
+            quoteEnd ==
+                std::string::npos ||
+            quoteEnd <= quoteStart)
+        {
+            continue;
+        }
+
+        std::string setName =
+            line.substr(
+                0,
+                quoteStart
+            );
+
+        while (!setName.empty() &&
+               std::isspace(
+                   static_cast<unsigned char>(
+                       setName.back())))
+        {
+            setName.pop_back();
+        }
+
+        std::string description =
+            line.substr(
+                quoteStart + 1,
+                quoteEnd -
+                    quoteStart - 1
+            );
+
+        if (!setName.empty())
+        {
+            titles[setName] =
+                description;
+        }
+    }
+
+    pclose(pipe);
+
+    return titles;
+}
 
 
 // --------------------------------------------------
@@ -656,7 +765,8 @@ fs::path findVideo(
 
 
 // --------------------------------------------------
-// Quote a path safely for the tiny ffprobe command.
+// Quote text safely for shell commands.
+// Used by ffprobe and MAME metadata queries.
 // --------------------------------------------------
 
 std::string shellQuote(
@@ -2824,6 +2934,9 @@ int main()
 
     std::vector<fs::path> games;
 
+    std::vector<std::string>
+        gameDisplayTitles;
+
 
     // Keep pixel graphics crisp
     SDL_SetHint(
@@ -4019,6 +4132,53 @@ int main()
                                 systems[activeSystemIndex].romExtensions
                             );
 
+                        gameDisplayTitles.clear();
+                        gameDisplayTitles.reserve(
+                            games.size()
+                        );
+
+                        for (const auto& game :
+                             games)
+                        {
+                            gameDisplayTitles.push_back(
+                                cleanGameTitle(
+                                    game
+                                )
+                            );
+                        }
+
+                        const std::string& activeSection =
+                            systems[activeSystemIndex]
+                                .configSection;
+
+                        if (activeSection == "arcade" ||
+                            activeSection == "neogeo")
+                        {
+                            auto mameTitles =
+                                loadMameDisplayTitles(
+                                    games
+                                );
+
+                            for (std::size_t index = 0;
+                                 index < games.size();
+                                 ++index)
+                            {
+                                auto found =
+                                    mameTitles.find(
+                                        games[index]
+                                            .stem()
+                                            .string()
+                                    );
+
+                                if (found !=
+                                    mameTitles.end())
+                                {
+                                    gameDisplayTitles[index] =
+                                        found->second;
+                                }
+                            }
+                        }
+
                         gameSelected =
                             0;
 
@@ -4860,9 +5020,9 @@ int main()
                 drawGameTitle(
                     renderer,
                     gameFont,
-                    cleanGameTitle(
-                        games[gameIndex]
-                    ),
+                    gameDisplayTitles[
+                        gameIndex
+                    ],
                     gameTextX,
                     y,
                     gameTextWidth,
