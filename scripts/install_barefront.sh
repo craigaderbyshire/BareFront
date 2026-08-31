@@ -1285,15 +1285,22 @@ heading "STAGE 3B / DUCKSTATION"
 
 DUCKSTATION_DIR="$BAREFRONT_DIR/emulators/duckstation"
 DUCKSTATION_EXE="$DUCKSTATION_DIR/DuckStation.AppImage"
+DUCKSTATION_SETTINGS="$DUCKSTATION_DIR/settings.ini"
 
-# DuckStation's official stable update channel is the GitHub tag
-# named "latest". The "preview" tag is the development/pre-release
-# channel and is deliberately NOT used by BareFront.
-DUCKSTATION_API="https://api.github.com/repos/stenzek/duckstation/releases/tags/latest"
+# BareFront deliberately pins DuckStation to a known-good build.
+#
+# Do NOT change this to GitHub's moving "latest" tag.
+# Emulator updates must be tested before BareFront adopts them.
+DUCKSTATION_VERSION="v0.1-11752"
 DUCKSTATION_ASSET_NAME="DuckStation-x64.AppImage"
+DUCKSTATION_DOWNLOAD_URL="https://github.com/stenzek/duckstation/releases/download/$DUCKSTATION_VERSION/$DUCKSTATION_ASSET_NAME"
+DUCKSTATION_SHA256="169a7dd2c37731780eb3729cbe16f048fff3e3b6ef9c9f499869dc1174899a54"
 
 echo "BareFront uses DuckStation for:"
 echo "  PlayStation"
+echo
+echo "Pinned version:"
+echo "  $DUCKSTATION_VERSION"
 echo
 echo "Install location:"
 echo "  $DUCKSTATION_DIR"
@@ -1301,107 +1308,82 @@ echo
 
 mkdir -p "$DUCKSTATION_DIR"
 
-if [[ -x "$DUCKSTATION_EXE" ]]; then
+# ------------------------------------------------------------
+# Install / verify the pinned DuckStation build
+# ------------------------------------------------------------
 
-    echo "DuckStation is already installed."
-    echo "Executable:"
-    echo "  $DUCKSTATION_EXE"
-    echo "Action: SKIP"
+NEED_DUCKSTATION_INSTALL=1
 
-else
+if [[ -f "$DUCKSTATION_EXE" ]]; then
 
-    echo "Asking GitHub for DuckStation's official stable release..."
-    echo
+    ACTUAL_SHA256="$(sha256sum "$DUCKSTATION_EXE" | awk '{print $1}')"
 
-    if ! DUCK_RELEASE_JSON="$(curl -fsSL "$DUCKSTATION_API")"; then
-        die "Could not retrieve DuckStation stable release information."
+    if [[ "$ACTUAL_SHA256" == "$DUCKSTATION_SHA256" ]]; then
+
+        echo "DuckStation already matches BareFront's pinned build."
+        echo "  SHA-256: OK"
+
+        chmod +x "$DUCKSTATION_EXE"
+        NEED_DUCKSTATION_INSTALL=0
+
+    else
+
+        echo "Existing DuckStation does not match the pinned build."
+        echo "Existing SHA-256:"
+        echo "  $ACTUAL_SHA256"
+        echo "Expected SHA-256:"
+        echo "  $DUCKSTATION_SHA256"
+        echo
+
+        # BareFront may replace a binary which it previously installed,
+        # but must never silently overwrite an unmanaged/user-supplied one.
+        if [[ -f "$DUCKSTATION_DIR/VERSION.txt" ]] &&
+           grep -q '^BareFront managed emulator$' "$DUCKSTATION_DIR/VERSION.txt"
+        then
+            echo "Existing DuckStation is BareFront-managed."
+            echo "Action: replace with pinned build."
+        else
+            echo "WARNING: Existing DuckStation is not marked as BareFront-managed."
+            echo "BareFront will not overwrite it."
+            die "Remove or relocate the unmanaged DuckStation binary before continuing."
+        fi
     fi
+fi
 
-    DUCK_RELEASE_NAME="$(
-        printf '%s' "$DUCK_RELEASE_JSON" \
-        | jq -r '.name // .tag_name // "Unknown"'
-    )"
 
-    DUCK_PUBLISHED="$(
-        printf '%s' "$DUCK_RELEASE_JSON" \
-        | jq -r '.published_at // "Unknown"'
-    )"
-
-    DUCK_ASSET_JSON="$(
-        printf '%s' "$DUCK_RELEASE_JSON" \
-        | jq -c --arg name "$DUCKSTATION_ASSET_NAME" '
-            .assets[]
-            | select(.name == $name)
-          ' \
-        | head -n 1
-    )"
-
-    if [[ -z "$DUCK_ASSET_JSON" ]]; then
-        echo "Release assets returned by GitHub:"
-        printf '%s' "$DUCK_RELEASE_JSON" \
-            | jq -r '.assets[]?.name' \
-            | sed 's/^/  /'
-        die "Official DuckStation x64 AppImage was not found."
-    fi
-
-    DUCK_DOWNLOAD_URL="$(
-        printf '%s' "$DUCK_ASSET_JSON" \
-        | jq -r '.browser_download_url'
-    )"
-
-    DUCK_DIGEST="$(
-        printf '%s' "$DUCK_ASSET_JSON" \
-        | jq -r '.digest // empty'
-    )"
-
-    echo "Release:"
-    echo "  $DUCK_RELEASE_NAME"
-    echo "Published:"
-    echo "  $DUCK_PUBLISHED"
-    echo "Asset:"
-    echo "  $DUCKSTATION_ASSET_NAME"
-    echo
+if [[ "$NEED_DUCKSTATION_INSTALL" -eq 1 ]]; then
 
     TEMP_DIR="$(mktemp -d)"
     TEMP_DOWNLOAD="$TEMP_DIR/DuckStation.AppImage"
 
-    echo "Downloading official x64 AppImage..."
+    echo "Downloading DuckStation $DUCKSTATION_VERSION..."
 
     if ! curl -fL --progress-bar \
-        "$DUCK_DOWNLOAD_URL" \
+        "$DUCKSTATION_DOWNLOAD_URL" \
         -o "$TEMP_DOWNLOAD"
     then
         rm -rf "$TEMP_DIR"
         die "DuckStation download failed."
     fi
 
-    # Modern GitHub release assets may provide a SHA-256 digest
-    # through the release API. Verify it when available.
-    if [[ "$DUCK_DIGEST" == sha256:* ]]; then
+    echo
+    echo "Checking DuckStation SHA-256..."
 
-        EXPECTED_SHA256="${DUCK_DIGEST#sha256:}"
-        ACTUAL_SHA256="$(sha256sum "$TEMP_DOWNLOAD" | awk '{print $1}')"
+    ACTUAL_SHA256="$(sha256sum "$TEMP_DOWNLOAD" | awk '{print $1}')"
 
-        echo
-        echo "Checking DuckStation SHA-256..."
+    if [[ "$ACTUAL_SHA256" != "$DUCKSTATION_SHA256" ]]; then
+        echo "Expected:"
+        echo "  $DUCKSTATION_SHA256"
+        echo "Received:"
+        echo "  $ACTUAL_SHA256"
 
-        if [[ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]]; then
-            rm -rf "$TEMP_DIR"
-            die "DuckStation SHA-256 verification failed."
-        fi
-
-        echo "  SHA-256: OK"
-
-    else
-
-        echo
-        echo "No release-asset SHA-256 was supplied by GitHub."
-        echo "The AppImage was downloaded directly from the official"
-        echo "DuckStation GitHub release."
-
+        rm -rf "$TEMP_DIR"
+        die "DuckStation SHA-256 verification failed."
     fi
 
-    # `file` inspects the contents rather than trusting the filename.
+    echo "  SHA-256: OK"
+
+    # Inspect the downloaded contents rather than trusting the filename.
     DOWNLOAD_TYPE="$(file -b "$TEMP_DOWNLOAD")"
 
     echo
@@ -1413,26 +1395,20 @@ else
         die "Downloaded DuckStation file does not look executable."
     fi
 
-    cp "$TEMP_DOWNLOAD" "$DUCKSTATION_EXE"
-
-    # Linux downloaded files are not automatically executable.
-    chmod +x "$DUCKSTATION_EXE"
+    install -m 0755 "$TEMP_DOWNLOAD" "$DUCKSTATION_EXE"
 
     rm -rf "$TEMP_DIR"
 
     echo
-    echo "DuckStation AppImage installed."
+    echo "DuckStation $DUCKSTATION_VERSION installed."
 fi
 
 
 # ------------------------------------------------------------
 # DuckStation portable user-data mode
 #
-# DuckStation officially supports an empty file named portable.txt
-# beside the executable. This makes its user-data directory the
-# same directory as the AppImage rather than ~/.local/share.
-#
-# This keeps the BareFront appliance self-contained and predictable.
+# portable.txt makes DuckStation use this directory as its
+# data root rather than ~/.local/share/duckstation.
 # ------------------------------------------------------------
 
 touch "$DUCKSTATION_DIR/portable.txt"
@@ -1441,12 +1417,80 @@ echo
 echo "DuckStation portable mode:"
 echo "  ENABLED"
 
+
+# ------------------------------------------------------------
+# BareFront PS1 save location
+#
+# DuckStation resolves relative folder settings from its data
+# root. In portable mode that is emulators/duckstation/.
+#
+# ../../saves/ps1 therefore resolves to:
+#
+#   BareFront/saves/ps1
+# ------------------------------------------------------------
+
+mkdir -p "$BAREFRONT_DIR/saves/ps1"
+
+
+# ------------------------------------------------------------
+# BareFront first-run DuckStation baseline
+#
+# IMPORTANT:
+# Create this file ONLY when no DuckStation settings already
+# exist. Once created, the settings belong to the user.
+#
+# Re-running the installer must never overwrite customised
+# emulator settings.
+# ------------------------------------------------------------
+
+if [[ -f "$DUCKSTATION_SETTINGS" ]]; then
+
+    echo
+    echo "DuckStation settings:"
+    echo "  Existing settings.ini preserved."
+
+else
+
+    cat > "$DUCKSTATION_SETTINGS" <<'EOF'
+[Main]
+SetupWizardIncomplete = false
+ConfirmPowerOff = false
+SaveStateOnExit = false
+NoDesktopFile = true
+
+[AutoUpdater]
+CheckAtStartup = false
+
+[MemoryCards]
+Directory = ../../saves/ps1
+
+[Folders]
+SaveStates = ../../saves/ps1
+
+[Hotkeys]
+OpenPauseMenu =
+PowerOff = Keyboard/Escape
+LoadSelectedSaveState = Keyboard/F1
+SaveSelectedSaveState = Keyboard/F2
+SelectPreviousSaveStateSlot = Keyboard/F3
+SelectNextSaveStateSlot = Keyboard/F4
+EOF
+
+    echo
+    echo "DuckStation settings:"
+    echo "  BareFront first-run baseline created."
+fi
+
+
+# ------------------------------------------------------------
+# DuckStation BIOS
+#
 # DuckStation expects BIOS images inside <user directory>/bios.
-# BareFront's official firmware location is bios/ps1/.
+# BareFront's firmware location is bios/ps1/.
 #
 # A symbolic link lets both conventions refer to the same folder.
-#
-# ln -s = create symbolic link (a filesystem pointer/shortcut).
+# ------------------------------------------------------------
+
 DUCK_BIOS_LINK="$DUCKSTATION_DIR/bios"
 BAREFRONT_PS1_BIOS="$BAREFRONT_DIR/bios/ps1"
 
@@ -1479,22 +1523,31 @@ else
     echo "Created DuckStation BIOS link:"
     echo "  $DUCK_BIOS_LINK"
     echo "       -> $BAREFRONT_PS1_BIOS"
-
 fi
 
 
 # ------------------------------------------------------------
-# Record what BareFront installed
+# Record the BareFront-managed build
 # ------------------------------------------------------------
 
-if [[ ! -f "$DUCKSTATION_DIR/VERSION.txt" ]]; then
+if [[ ! -f "$DUCKSTATION_DIR/VERSION.txt" ]] ||
+   grep -q '^BareFront managed emulator$' "$DUCKSTATION_DIR/VERSION.txt"
+then
+
     cat > "$DUCKSTATION_DIR/VERSION.txt" <<EOF
 BareFront managed emulator
 Emulator: DuckStation
-Channel: Stable (GitHub tag: latest)
+Version: $DUCKSTATION_VERSION
 Source: https://github.com/stenzek/duckstation
 Asset: $DUCKSTATION_ASSET_NAME
+SHA256: $DUCKSTATION_SHA256
 EOF
+
+else
+
+    echo
+    echo "WARNING: Existing DuckStation VERSION.txt is not BareFront-managed."
+    echo "Leaving it untouched."
 fi
 
 
@@ -1505,17 +1558,36 @@ fi
 echo
 echo "Verifying DuckStation..."
 
-if [[ -x "$DUCKSTATION_EXE" ]]; then
-    echo "  Executable: OK"
-    echo "  $DUCKSTATION_EXE"
-else
+if [[ ! -x "$DUCKSTATION_EXE" ]]; then
     die "DuckStation installation verification failed."
 fi
+
+ACTUAL_SHA256="$(sha256sum "$DUCKSTATION_EXE" | awk '{print $1}')"
+
+if [[ "$ACTUAL_SHA256" != "$DUCKSTATION_SHA256" ]]; then
+    die "Installed DuckStation does not match the pinned SHA-256."
+fi
+
+echo "  Executable: OK"
+echo "  Version:    $DUCKSTATION_VERSION"
+echo "  SHA-256:    OK"
 
 if [[ -f "$DUCKSTATION_DIR/portable.txt" ]]; then
     echo "  Portable mode marker: OK"
 else
     die "DuckStation portable mode marker is missing."
+fi
+
+if [[ -f "$DUCKSTATION_SETTINGS" ]]; then
+    echo "  settings.ini: OK"
+else
+    die "DuckStation settings.ini is missing."
+fi
+
+if [[ -d "$BAREFRONT_DIR/saves/ps1" ]]; then
+    echo "  PS1 save directory: OK"
+else
+    die "BareFront PS1 save directory is missing."
 fi
 
 echo
