@@ -1810,8 +1810,14 @@ heading "STAGE 3B / FLYCAST"
 
 FLYCAST_DIR="$BAREFRONT_DIR/emulators/flycast"
 FLYCAST_EXE="$FLYCAST_DIR/Flycast.AppImage"
+FLYCAST_LAUNCHER="$FLYCAST_DIR/launch_flycast.sh"
 FLYCAST_DATA_DIR="$FLYCAST_DIR/data"
-FLYCAST_API="https://api.github.com/repos/flyinghead/flycast/releases/latest"
+
+# BareFront Stage 8 known-good Flycast build.
+FLYCAST_EXPECTED_VERSION="v2.7"
+FLYCAST_EXPECTED_ASSET="flycast-x86_64-2.7.AppImage"
+FLYCAST_EXPECTED_SHA256="5b9f8a636a6acb8446bc78fe96650d8cb8233ac9f8ce69665dab3f39a1cbaae1"
+FLYCAST_API="https://api.github.com/repos/flyinghead/flycast/releases/tags/$FLYCAST_EXPECTED_VERSION"
 
 echo "BareFront uses Flycast for:"
 echo "  Dreamcast"
@@ -1827,16 +1833,34 @@ mkdir -p \
     "$BAREFRONT_DIR/saves/dreamcast"
 
 
-if [[ -x "$FLYCAST_EXE" ]]; then
+FLYCAST_INSTALLED_SHA256=""
 
-    echo "Flycast is already installed."
+if [[ -x "$FLYCAST_EXE" ]]; then
+    FLYCAST_INSTALLED_SHA256="$(
+        sha256sum "$FLYCAST_EXE" | awk '{print $1}'
+    )"
+fi
+
+
+if [[ -x "$FLYCAST_EXE" \
+   && "$FLYCAST_INSTALLED_SHA256" == "$FLYCAST_EXPECTED_SHA256" ]]
+then
+
+    echo "Flycast pinned build is already installed."
     echo "Executable:"
     echo "  $FLYCAST_EXE"
+    echo "  SHA-256: OK"
     echo "Action: SKIP"
 
 else
 
-    echo "Asking GitHub for the latest stable Flycast release..."
+    if [[ -x "$FLYCAST_EXE" ]]; then
+        echo "Existing Flycast build does not match the BareFront pin."
+        echo "Action: REPLACE"
+        echo
+    fi
+
+    echo "Asking GitHub for the pinned Flycast release..."
     echo
 
     # /releases/latest returns the newest normal tagged release,
@@ -1852,6 +1876,10 @@ else
 
     if [[ -z "$FLYCAST_VERSION" ]]; then
         die "GitHub did not return a Flycast stable release version."
+    fi
+
+    if [[ "$FLYCAST_VERSION" != "$FLYCAST_EXPECTED_VERSION" ]]; then
+        die "Flycast release mismatch: expected $FLYCAST_EXPECTED_VERSION, got $FLYCAST_VERSION."
     fi
 
     echo "Latest stable release:"
@@ -1893,6 +1921,10 @@ else
         | jq -r '.browser_download_url'
     )"
 
+    if [[ "$FLYCAST_ASSET_NAME" != "$FLYCAST_EXPECTED_ASSET" ]]; then
+        die "Flycast asset mismatch: expected $FLYCAST_EXPECTED_ASSET, got $FLYCAST_ASSET_NAME."
+    fi
+
     FLYCAST_DIGEST="$(
         printf '%s' "$FLYCAST_ASSET_JSON" \
         | jq -r '.digest // empty'
@@ -1914,6 +1946,18 @@ else
         rm -rf "$TEMP_DIR"
         die "Flycast download failed."
     fi
+
+    PINNED_SHA256="$(sha256sum "$TEMP_DOWNLOAD" | awk '{print $1}')"
+
+    echo
+    echo "Checking pinned Flycast SHA-256..."
+
+    if [[ "$PINNED_SHA256" != "$FLYCAST_EXPECTED_SHA256" ]]; then
+        rm -rf "$TEMP_DIR"
+        die "Flycast pinned SHA-256 verification failed."
+    fi
+
+    echo "  SHA-256: OK"
 
     if [[ "$FLYCAST_DIGEST" == sha256:* ]]; then
 
@@ -2055,6 +2099,112 @@ ensure_simple_symlink \
     "$BAREFRONT_DC_FLASH_WORKING" \
     "$FLYCAST_FLASH_LINK" \
     "Dreamcast writable flash"
+
+
+# ------------------------------------------------------------
+# Flycast BareFront runtime integration
+# ------------------------------------------------------------
+
+FLYCAST_CONFIG_DIR="$HOME/.config/flycast"
+FLYCAST_MAPPING_DIR="$FLYCAST_CONFIG_DIR/mappings"
+FLYCAST_CONFIG="$FLYCAST_CONFIG_DIR/emu.cfg"
+FLYCAST_KEYBOARD_MAPPING="$FLYCAST_MAPPING_DIR/SDL_Keyboard.cfg"
+
+mkdir -p "$FLYCAST_CONFIG_DIR" "$FLYCAST_MAPPING_DIR"
+
+if [[ ! -f "$FLYCAST_CONFIG" ]]; then
+
+    cat > "$FLYCAST_CONFIG" <<EOF
+[config]
+UseReios = no
+FastGDRomLoad = no
+Dreamcast.BiosPath = $FLYCAST_DATA_DIR
+EOF
+
+    echo "  Flycast BareFront config: CREATED"
+
+else
+
+    echo "  Flycast config already exists: PRESERVED"
+
+    if ! grep -Fqx 'UseReios = no' "$FLYCAST_CONFIG" \
+       || ! grep -Fqx 'FastGDRomLoad = no' "$FLYCAST_CONFIG" \
+       || ! grep -Fqx "Dreamcast.BiosPath = $FLYCAST_DATA_DIR" "$FLYCAST_CONFIG"
+    then
+        echo "  WARNING: existing Flycast config does not contain"
+        echo "           the complete BareFront Dreamcast BIOS baseline."
+    fi
+
+fi
+
+
+if [[ ! -f "$FLYCAST_KEYBOARD_MAPPING" ]]; then
+
+    cat > "$FLYCAST_KEYBOARD_MAPPING" <<'EOF'
+[digital]
+bind0 = 4:btn_d
+bind1 = 6:btn_b
+bind10 = 27:btn_a
+bind11 = 40:btn_start
+bind12 = 41:btn_escape
+bind13 = 43:btn_menu
+bind14 = 44:btn_fforward
+bind15 = 69:btn_screenshot
+bind16 = 79:btn_dpad1_right
+bind17 = 80:btn_dpad1_left
+bind18 = 81:btn_dpad1_down
+bind19 = 82:btn_dpad1_up
+bind2 = 7:btn_y
+bind3 = 9:btn_trigger_left
+bind4 = 12:btn_analog_up
+bind5 = 13:btn_analog_left
+bind6 = 14:btn_analog_down
+bind7 = 15:btn_analog_right
+bind8 = 22:btn_x
+bind9 = 25:btn_trigger_right
+
+[emulator]
+dead_zone = 10
+mapping_name = Keyboard
+rumble_power = 100
+saturation = 100
+triggers =
+version = 4
+EOF
+
+    echo "  Flycast keyboard baseline: CREATED"
+
+else
+
+    echo "  Flycast keyboard mapping already exists: PRESERVED"
+
+    if ! grep -Fq '41:btn_escape' "$FLYCAST_KEYBOARD_MAPPING"; then
+        echo "  WARNING: existing Flycast keyboard map does not bind"
+        echo "           Escape to the emulator Exit action."
+    fi
+
+fi
+
+
+# BareFront-owned launcher adapter.
+# XDG_DATA_HOME routes VMU/NVRAM data into BareFront/saves.
+cat > "$FLYCAST_LAUNCHER" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROM="${1:?Usage: launch_flycast.sh <rom>}"
+
+mkdir -p "$ROOT/saves/dreamcast"
+
+export XDG_DATA_HOME="$ROOT/saves/dreamcast"
+
+exec "$ROOT/emulators/flycast/Flycast.AppImage" "$ROM"
+EOF
+
+chmod +x "$FLYCAST_LAUNCHER"
+
+echo "  Flycast BareFront launcher: READY"
 
 
 # ------------------------------------------------------------
@@ -3285,7 +3435,7 @@ arguments={rom}
 [dreamcast]
 roms=roms/dreamcast
 screenshots=assets/games/dreamcast
-emulator=$FLYCAST_EXE
+emulator=$FLYCAST_LAUNCHER
 arguments={rom}
 
 [saturn]
