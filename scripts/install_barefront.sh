@@ -3736,6 +3736,100 @@ PYSTELLAMIGRATE
 fi
 
 
+# ------------------------------------------------------------
+# Flycast production-config migration
+#
+# Older BareFront production configs launched Flycast's AppImage
+# directly. Dreamcast now uses the BareFront launcher so Flycast
+# VMU/NVRAM data is routed under saves/dreamcast/.
+#
+# Only the exact old BareFront-generated Dreamcast settings are
+# changed. Custom configurations are preserved.
+# ------------------------------------------------------------
+
+FLYCAST_MIGRATION_BACKUP="$LOG_DIR/barefront.ini.pre-flycast-migration"
+
+if [[ -f "$CONFIG_FILE" ]] &&
+   ! grep -Eq '^roms=testroms/' "$CONFIG_FILE"
+then
+
+    FLYCAST_MIGRATION_RESULT="$(
+        python3 - "$CONFIG_FILE" "$FLYCAST_EXE" "$FLYCAST_LAUNCHER" "$FLYCAST_MIGRATION_BACKUP" <<'PYFLYCASTMIGRATE'
+from pathlib import Path
+import shutil
+import sys
+
+config = Path(sys.argv[1])
+old_exe = sys.argv[2]
+new_launcher = sys.argv[3]
+backup = Path(sys.argv[4])
+
+lines = config.read_text().splitlines()
+
+in_dreamcast = False
+emulator_index = None
+arguments_index = None
+
+for index, line in enumerate(lines):
+    stripped = line.strip()
+
+    if stripped.startswith("[") and stripped.endswith("]"):
+        if in_dreamcast:
+            break
+        in_dreamcast = stripped == "[dreamcast]"
+        continue
+
+    if not in_dreamcast:
+        continue
+
+    if stripped.startswith("emulator="):
+        emulator_index = index
+    elif stripped.startswith("arguments="):
+        arguments_index = index
+
+if emulator_index is None or arguments_index is None:
+    print("NO_CHANGE")
+    raise SystemExit(0)
+
+if lines[emulator_index].strip() != f"emulator={old_exe}":
+    print("NO_CHANGE")
+    raise SystemExit(0)
+
+if lines[arguments_index].strip() != "arguments={rom}":
+    print("NO_CHANGE")
+    raise SystemExit(0)
+
+backup.parent.mkdir(parents=True, exist_ok=True)
+
+if not backup.exists():
+    shutil.copy2(config, backup)
+
+indent = lines[emulator_index][
+    :len(lines[emulator_index]) - len(lines[emulator_index].lstrip())
+]
+
+lines[emulator_index] = f"{indent}emulator={new_launcher}"
+
+config.write_text("\n".join(lines) + "\n")
+
+print("MIGRATED")
+PYFLYCASTMIGRATE
+    )"
+
+    if [[ "$FLYCAST_MIGRATION_RESULT" == "MIGRATED" ]]; then
+        echo
+        echo "Migrated legacy Dreamcast Flycast launcher:"
+        echo "  $FLYCAST_EXE"
+        echo "    ->"
+        echo "  $FLYCAST_LAUNCHER"
+        echo
+        echo "Previous configuration backed up to:"
+        echo "  $FLYCAST_MIGRATION_BACKUP"
+    fi
+
+fi
+
+
 if [[ ! -e "$CONFIG_FILE" ]]; then
 
     mv "$TEMP_CONFIG" "$CONFIG_FILE"
