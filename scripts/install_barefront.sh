@@ -1603,10 +1603,22 @@ heading "STAGE 3B / PCSX2"
 
 PCSX2_DIR="$BAREFRONT_DIR/emulators/pcsx2"
 PCSX2_EXE="$PCSX2_DIR/PCSX2.AppImage"
-PCSX2_API="https://api.github.com/repos/PCSX2/pcsx2/releases/latest"
+PCSX2_LAUNCHER="$PCSX2_DIR/launch_pcsx2.sh"
+
+# BareFront deliberately pins PCSX2 to a known build.
+#
+# Do NOT change this to GitHub's moving "latest" release.
+# Emulator updates must be tested before BareFront adopts them.
+PCSX2_VERSION="v2.6.3"
+PCSX2_ASSET_NAME="pcsx2-v2.6.3-linux-appimage-x64-Qt.AppImage"
+PCSX2_DOWNLOAD_URL="https://github.com/PCSX2/pcsx2/releases/download/$PCSX2_VERSION/$PCSX2_ASSET_NAME"
+PCSX2_SHA256="8ce7de8613c17b00b01028a512dd1b81998b6626ebbe93a067e0eb20aeedd5bf"
 
 echo "BareFront uses PCSX2 for:"
 echo "  PlayStation 2"
+echo
+echo "Pinned version:"
+echo "  $PCSX2_VERSION"
 echo
 echo "Install location:"
 echo "  $PCSX2_DIR"
@@ -1614,83 +1626,51 @@ echo
 
 mkdir -p "$PCSX2_DIR"
 
-if [[ -x "$PCSX2_EXE" ]]; then
+NEED_PCSX2_INSTALL=1
 
-    echo "PCSX2 is already installed."
-    echo "Executable:"
-    echo "  $PCSX2_EXE"
-    echo "Action: SKIP"
+if [[ -f "$PCSX2_EXE" ]]; then
 
-else
+    ACTUAL_SHA256="$(sha256sum "$PCSX2_EXE" | awk '{print $1}')"
 
-    echo "Asking GitHub for the latest stable PCSX2 release..."
-    echo
+    if [[ "$ACTUAL_SHA256" == "$PCSX2_SHA256" ]]; then
 
-    # GitHub's /releases/latest endpoint returns the most recent
-    # normal release and excludes prereleases/nightlies.
-    if ! PCSX2_RELEASE_JSON="$(curl -fsSL "$PCSX2_API")"; then
-        die "Could not retrieve PCSX2 stable release information."
+        echo "PCSX2 already matches BareFront's pinned build."
+        echo "  SHA-256: OK"
+
+        chmod +x "$PCSX2_EXE"
+        NEED_PCSX2_INSTALL=0
+
+    else
+
+        echo "Existing PCSX2 does not match the pinned build."
+        echo "Existing SHA-256:"
+        echo "  $ACTUAL_SHA256"
+        echo "Expected SHA-256:"
+        echo "  $PCSX2_SHA256"
+        echo
+
+        # BareFront may replace a binary which it previously installed,
+        # but must never silently overwrite an unmanaged/user-supplied one.
+        if [[ -f "$PCSX2_DIR/VERSION.txt" ]] &&
+           grep -q '^BareFront managed emulator$' "$PCSX2_DIR/VERSION.txt"
+        then
+            echo "Existing PCSX2 is BareFront-managed."
+            echo "Action: replace with pinned build."
+        else
+            echo "WARNING: Existing PCSX2 is not marked as BareFront-managed."
+            echo "BareFront will not overwrite it."
+            die "Remove or relocate the unmanaged PCSX2 binary before continuing."
+        fi
     fi
+fi
 
-    PCSX2_VERSION="$(
-        printf '%s' "$PCSX2_RELEASE_JSON" \
-        | jq -r '.tag_name // empty'
-    )"
 
-    if [[ -z "$PCSX2_VERSION" ]]; then
-        die "GitHub did not return a stable PCSX2 release version."
-    fi
-
-    echo "Latest stable release:"
-    echo "  $PCSX2_VERSION"
-    echo
-
-    # Select the official Linux x64 Qt AppImage.
-    PCSX2_ASSET_JSON="$(
-        printf '%s' "$PCSX2_RELEASE_JSON" \
-        | jq -c '
-            [
-              .assets[]
-              | select(.name | test("linux"; "i"))
-              | select(.name | test("appimage"; "i"))
-              | select(.name | test("x64|x86_64"; "i"))
-              | select(.name | test("Qt"; "i"))
-              | select((.name | test("arm"; "i")) | not)
-            ][0] // empty
-          '
-    )"
-
-    if [[ -z "$PCSX2_ASSET_JSON" ]]; then
-        echo "Release assets returned by GitHub:"
-        printf '%s' "$PCSX2_RELEASE_JSON" \
-            | jq -r '.assets[]?.name' \
-            | sed 's/^/  /'
-        die "Could not identify the official PCSX2 Linux x64 Qt AppImage."
-    fi
-
-    PCSX2_ASSET_NAME="$(
-        printf '%s' "$PCSX2_ASSET_JSON" \
-        | jq -r '.name'
-    )"
-
-    PCSX2_DOWNLOAD_URL="$(
-        printf '%s' "$PCSX2_ASSET_JSON" \
-        | jq -r '.browser_download_url'
-    )"
-
-    PCSX2_DIGEST="$(
-        printf '%s' "$PCSX2_ASSET_JSON" \
-        | jq -r '.digest // empty'
-    )"
-
-    echo "Selected asset:"
-    echo "  $PCSX2_ASSET_NAME"
-    echo
+if [[ "$NEED_PCSX2_INSTALL" -eq 1 ]]; then
 
     TEMP_DIR="$(mktemp -d)"
     TEMP_DOWNLOAD="$TEMP_DIR/PCSX2.AppImage"
 
-    echo "Downloading official stable AppImage..."
+    echo "Downloading PCSX2 $PCSX2_VERSION..."
 
     if ! curl -fL --progress-bar \
         "$PCSX2_DOWNLOAD_URL" \
@@ -1700,30 +1680,22 @@ else
         die "PCSX2 download failed."
     fi
 
-    # Verify the GitHub-published SHA-256 digest when available.
-    if [[ "$PCSX2_DIGEST" == sha256:* ]]; then
+    echo
+    echo "Checking PCSX2 SHA-256..."
 
-        EXPECTED_SHA256="${PCSX2_DIGEST#sha256:}"
-        ACTUAL_SHA256="$(sha256sum "$TEMP_DOWNLOAD" | awk '{print $1}')"
+    ACTUAL_SHA256="$(sha256sum "$TEMP_DOWNLOAD" | awk '{print $1}')"
 
-        echo
-        echo "Checking PCSX2 SHA-256..."
+    if [[ "$ACTUAL_SHA256" != "$PCSX2_SHA256" ]]; then
+        echo "Expected:"
+        echo "  $PCSX2_SHA256"
+        echo "Received:"
+        echo "  $ACTUAL_SHA256"
 
-        if [[ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]]; then
-            rm -rf "$TEMP_DIR"
-            die "PCSX2 SHA-256 verification failed."
-        fi
-
-        echo "  SHA-256: OK"
-
-    else
-
-        echo
-        echo "No release-asset SHA-256 was supplied by GitHub."
-        echo "The AppImage was downloaded directly from the official"
-        echo "PCSX2 GitHub release."
-
+        rm -rf "$TEMP_DIR"
+        die "PCSX2 SHA-256 verification failed."
     fi
+
+    echo "  SHA-256: OK"
 
     DOWNLOAD_TYPE="$(file -b "$TEMP_DOWNLOAD")"
 
@@ -1736,36 +1708,57 @@ else
         die "Downloaded PCSX2 file does not look executable."
     fi
 
-    cp "$TEMP_DOWNLOAD" "$PCSX2_EXE"
-    chmod +x "$PCSX2_EXE"
-
-    cat > "$PCSX2_DIR/VERSION.txt" <<EOF
-BareFront managed emulator
-Emulator: PCSX2
-Release: $PCSX2_VERSION
-Source: https://github.com/PCSX2/pcsx2
-Asset: $PCSX2_ASSET_NAME
-EOF
+    install -m 0755 "$TEMP_DOWNLOAD" "$PCSX2_EXE"
 
     rm -rf "$TEMP_DIR"
 
     echo
-    echo "PCSX2 AppImage installed."
+    echo "PCSX2 $PCSX2_VERSION installed."
+fi
+
+
+# Record the BareFront-managed build.
+#
+# A missing VERSION.txt is safe to create when the installed
+# binary already matches the exact BareFront pin.
+if [[ ! -f "$PCSX2_DIR/VERSION.txt" ]] ||
+   grep -q '^BareFront managed emulator$' "$PCSX2_DIR/VERSION.txt"
+then
+
+    cat > "$PCSX2_DIR/VERSION.txt" <<EOF
+BareFront managed emulator
+Emulator: PCSX2
+Version: $PCSX2_VERSION
+Source: https://github.com/PCSX2/pcsx2
+Asset: $PCSX2_ASSET_NAME
+SHA256: $PCSX2_SHA256
+EOF
+
+else
+
+    echo
+    echo "WARNING: Existing PCSX2 VERSION.txt is not BareFront-managed."
+    echo "Leaving it untouched."
 fi
 
 
 # ------------------------------------------------------------
-# PCSX2 portable mode
+# PCSX2 portable data root
 # ------------------------------------------------------------
 
-# PCSX2 officially supports portable.txt or portable.ini beside
-# the executable. In portable mode its data root becomes this
-# directory instead of ~/.config/PCSX2.
-touch "$PCSX2_DIR/portable.txt"
+# With the Linux AppImage, PCSX2 -portable stores its data in a
+# sibling "PCSX2" directory beside the AppImage.
+#
+# BareFront therefore always launches PCSX2 with -portable and
+# manages this directory as PCSX2's portable data root.
+PCSX2_DATA_DIR="$PCSX2_DIR/PCSX2"
+PCSX2_INI="$PCSX2_DATA_DIR/inis/PCSX2.ini"
+
+mkdir -p "$PCSX2_DATA_DIR"
 
 echo
-echo "PCSX2 portable mode:"
-echo "  ENABLED"
+echo "PCSX2 portable data root:"
+echo "  $PCSX2_DATA_DIR"
 
 
 # ------------------------------------------------------------
@@ -1822,22 +1815,360 @@ ensure_symlink()
 
 
 echo
-echo "Connecting PCSX2 data folders to BareFront..."
+echo "Connecting PCSX2 portable data folders to BareFront..."
 
 ensure_symlink \
     "$BAREFRONT_DIR/bios/ps2" \
-    "$PCSX2_DIR/bios" \
+    "$PCSX2_DATA_DIR/bios" \
     "BIOS"
 
 ensure_symlink \
     "$BAREFRONT_DIR/saves/ps2/memcards" \
-    "$PCSX2_DIR/memcards" \
+    "$PCSX2_DATA_DIR/memcards" \
     "Memory cards"
 
 ensure_symlink \
     "$BAREFRONT_DIR/saves/ps2/sstates" \
-    "$PCSX2_DIR/sstates" \
+    "$PCSX2_DATA_DIR/sstates" \
     "Save states"
+
+
+# ------------------------------------------------------------
+# First-run PCSX2 configuration
+# ------------------------------------------------------------
+
+# Do not manufacture PCSX2's full configuration ourselves.
+#
+# On a genuinely fresh profile, the pinned PCSX2 build creates
+# its own default configuration, including its normal controller
+# and hotkey mappings. BareFront then changes only the small
+# appliance-facing settings it deliberately owns.
+#
+# Existing PCSX2.ini files are never rewritten by the installer.
+if [[ ! -f "$PCSX2_INI" ]]; then
+
+    echo
+    echo "Creating initial PCSX2 portable configuration..."
+
+    if ! "$PCSX2_EXE" -portable -testconfig; then
+        die "PCSX2 failed to create its initial portable configuration."
+    fi
+
+    if [[ ! -f "$PCSX2_INI" ]]; then
+        die "PCSX2 did not create the expected portable PCSX2.ini."
+    fi
+
+    python3 - "$PCSX2_INI" <<'PYCONFIG'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+lines = path.read_text().splitlines()
+
+
+def set_value(section, key, value):
+    header = f"[{section}]"
+
+    try:
+        section_start = lines.index(header)
+    except ValueError:
+        if lines and lines[-1] != "":
+            lines.append("")
+        lines.append(header)
+        lines.append(f"{key} = {value}")
+        lines.append("")
+        return
+
+    section_end = len(lines)
+
+    for i in range(section_start + 1, len(lines)):
+        if lines[i].startswith("[") and lines[i].endswith("]"):
+            section_end = i
+            break
+
+    for i in range(section_start + 1, section_end):
+        stripped = lines[i].lstrip()
+
+        if stripped.startswith(f"{key} =") or stripped.startswith(f"{key}="):
+            lines[i] = f"{key} = {value}"
+            return
+
+    lines.insert(section_end, f"{key} = {value}")
+
+
+# BareFront appliance behaviour.
+set_value("UI", "SetupWizardIncomplete", "false")
+set_value("UI", "ConfirmShutdown", "false")
+
+# BareFront pins the emulator build, so PCSX2 must not self-update.
+set_value("AutoUpdater", "CheckAtStartup", "false")
+
+# Escape must return directly to BareFront rather than opening
+# PCSX2's pause menu.
+set_value("Hotkeys", "OpenPauseMenu", "")
+set_value("Hotkeys", "ShutdownVM", "Keyboard/Escape")
+
+# Do not hard-code a user's BIOS filename. BareFront's PS2
+# launcher selects a region-matching BIOS immediately before
+# each game starts.
+set_value("Filenames", "BIOS", "")
+
+path.write_text("\n".join(lines) + "\n")
+PYCONFIG
+
+    echo "Initial PCSX2 configuration created."
+    echo "  Setup wizard: disabled"
+    echo "  Automatic updates: disabled"
+    echo "  Escape: return to BareFront"
+    echo "  BIOS selection: mixed-region launcher"
+
+else
+
+    echo
+    echo "Existing PCSX2 configuration found."
+    echo "Leaving user configuration untouched:"
+    echo "  $PCSX2_INI"
+
+fi
+
+
+# ------------------------------------------------------------
+# BareFront mixed-region PS2 launcher
+# ------------------------------------------------------------
+
+# BareFront owns this launcher. It determines the game's
+# region from the curated ROM filename, identifies real PS2
+# BIOS images from their ROMVER data, selects the newest
+# matching BIOS, then starts PCSX2 with an authentic slow boot.
+cat > "$PCSX2_LAUNCHER" <<'BAREFRONT_PCSX2_LAUNCHER_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BAREFRONT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+PCSX2_EXE="$SCRIPT_DIR/PCSX2.AppImage"
+PCSX2_DATA_DIR="$SCRIPT_DIR/PCSX2"
+PCSX2_INI="$PCSX2_DATA_DIR/inis/PCSX2.ini"
+BIOS_DIR="$PCSX2_DATA_DIR/bios"
+
+ROM="${1:-}"
+
+if [[ -z "$ROM" ]]; then
+    echo "ERROR: No PS2 game supplied." >&2
+    exit 1
+fi
+
+if [[ ! -f "$ROM" ]]; then
+    echo "ERROR: PS2 game not found:" >&2
+    echo "  $ROM" >&2
+    exit 1
+fi
+
+if [[ ! -x "$PCSX2_EXE" ]]; then
+    echo "ERROR: PCSX2 executable not found:" >&2
+    echo "  $PCSX2_EXE" >&2
+    exit 1
+fi
+
+if [[ ! -f "$PCSX2_INI" ]]; then
+    echo "ERROR: PCSX2 portable configuration not found:" >&2
+    echo "  $PCSX2_INI" >&2
+    exit 1
+fi
+
+
+python3 - "$ROM" "$BIOS_DIR" "$PCSX2_INI" <<'PY'
+from pathlib import Path
+import re
+import struct
+import sys
+
+rom = Path(sys.argv[1])
+bios_dir = Path(sys.argv[2])
+ini = Path(sys.argv[3])
+
+REGION_CODES = {
+    "A": "USA",
+    "E": "Europe",
+    "J": "Japan",
+    "H": "Asia",
+    "C": "China",
+    "P": "Free",
+    "X": "Test",
+}
+
+
+def game_region(name):
+    rules = [
+        (r"\((?:USA|United States|Canada)\)|NTSC[- _]?U", "USA"),
+        (r"\((?:Europe|PAL|Australia|New Zealand)\)|\bPAL\b", "Europe"),
+        (r"\((?:Japan)\)|NTSC[- _]?J", "Japan"),
+        (r"\((?:Asia)\)", "Asia"),
+        (r"\((?:China)\)", "China"),
+    ]
+
+    matches = {
+        region
+        for pattern, region in rules
+        if re.search(pattern, name, re.IGNORECASE)
+    }
+
+    if len(matches) == 1:
+        return next(iter(matches))
+
+    if not matches:
+        raise SystemExit(
+            f"ERROR: Cannot determine PS2 game region from filename:\n  {name}"
+        )
+
+    raise SystemExit(
+        f"ERROR: Ambiguous PS2 game region in filename:\n"
+        f"  {name}\n"
+        f"Matches: {', '.join(sorted(matches))}"
+    )
+
+
+def identify_bios(path):
+    size = path.stat().st_size
+
+    if not (4 * 1024 * 1024 <= size <= 8 * 1024 * 1024):
+        return None
+
+    data = path.read_bytes()
+
+    romdir_pos = None
+
+    for pos in range(0, min(len(data), 512 * 1024), 16):
+        entry = data[pos:pos + 16]
+
+        if len(entry) < 16:
+            break
+
+        if entry[:10].split(b"\0", 1)[0] == b"RESET":
+            romdir_pos = pos
+            break
+
+    if romdir_pos is None:
+        return None
+
+    file_offset = 0
+    pos = romdir_pos
+
+    while pos + 16 <= len(data):
+        entry = data[pos:pos + 16]
+
+        name = (
+            entry[:10]
+            .split(b"\0", 1)[0]
+            .decode("ascii", "ignore")
+        )
+
+        if not name:
+            break
+
+        _, file_size = struct.unpack_from("<HI", entry, 10)
+
+        if name == "ROMVER":
+            romver = data[file_offset:file_offset + 14].decode(
+                "ascii", "replace"
+            )
+
+            if len(romver) != 14:
+                return None
+
+            region = REGION_CODES.get(romver[4])
+
+            if region is None:
+                return None
+
+            return {
+                "region": region,
+                "version": int(romver[0:4]),
+                "date": int(romver[6:14]),
+                "romver": romver,
+            }
+
+        file_offset += (file_size + 0x0F) & ~0x0F
+        pos += 16
+
+    return None
+
+
+region = game_region(rom.name)
+
+candidates = []
+
+for path in bios_dir.iterdir():
+    if not path.is_file():
+        continue
+
+    info = identify_bios(path)
+
+    if info and info["region"] == region:
+        candidates.append(
+            (info["date"], info["version"], path.name.lower(), path, info)
+        )
+
+if not candidates:
+    raise SystemExit(
+        f"ERROR: No valid {region} PS2 BIOS found in:\n  {bios_dir}"
+    )
+
+# Newest BIOS date first, then highest version.
+candidates.sort(reverse=True)
+
+_, _, _, selected, info = candidates[0]
+
+print(f"BareFront PS2 region: {region}")
+print(f"BareFront PS2 BIOS:   {selected.name}")
+
+lines = ini.read_text().splitlines()
+
+header = "[Filenames]"
+
+try:
+    start = lines.index(header)
+except ValueError:
+    if lines and lines[-1] != "":
+        lines.append("")
+
+    lines.extend([
+        header,
+        f"BIOS = {selected.name}",
+        "",
+    ])
+else:
+    end = len(lines)
+
+    for i in range(start + 1, len(lines)):
+        if lines[i].startswith("[") and lines[i].endswith("]"):
+            end = i
+            break
+
+    for i in range(start + 1, end):
+        if lines[i].lstrip().startswith("BIOS ="):
+            lines[i] = f"BIOS = {selected.name}"
+            break
+    else:
+        lines.insert(end, f"BIOS = {selected.name}")
+
+ini.write_text("\n".join(lines) + "\n")
+PY
+
+
+exec "$PCSX2_EXE" \
+    -portable \
+    -batch \
+    -slowboot \
+    "$ROM"
+BAREFRONT_PCSX2_LAUNCHER_EOF
+
+chmod +x "$PCSX2_LAUNCHER"
+
+echo
+echo "Mixed-region PS2 launcher installed:"
+echo "  $PCSX2_LAUNCHER"
 
 
 # ------------------------------------------------------------
@@ -1854,21 +2185,58 @@ else
     die "PCSX2 installation verification failed."
 fi
 
-if [[ -f "$PCSX2_DIR/portable.txt" ]]; then
-    echo "  Portable mode marker: OK"
+if [[ -x "$PCSX2_LAUNCHER" ]]; then
+    echo "  Mixed-region launcher: OK"
+    echo "  $PCSX2_LAUNCHER"
 else
-    die "PCSX2 portable mode marker is missing."
+    die "PCSX2 mixed-region launcher verification failed."
+fi
+
+if [[ -d "$PCSX2_DATA_DIR" ]]; then
+    echo "  Portable data root: OK"
+else
+    die "PCSX2 portable data root is missing."
+fi
+
+if [[ "$(readlink "$PCSX2_DATA_DIR/bios" 2>/dev/null || true)" == "$BAREFRONT_DIR/bios/ps2" ]]; then
+    echo "  BIOS link: OK"
+else
+    die "PCSX2 BIOS link verification failed."
+fi
+
+if [[ "$(readlink "$PCSX2_DATA_DIR/memcards" 2>/dev/null || true)" == "$BAREFRONT_DIR/saves/ps2/memcards" ]]; then
+    echo "  Memory-card link: OK"
+else
+    die "PCSX2 memory-card link verification failed."
+fi
+
+if [[ "$(readlink "$PCSX2_DATA_DIR/sstates" 2>/dev/null || true)" == "$BAREFRONT_DIR/saves/ps2/sstates" ]]; then
+    echo "  Save-state link: OK"
+else
+    die "PCSX2 save-state link verification failed."
+fi
+
+if [[ -f "$PCSX2_INI" ]]; then
+    echo "  Portable configuration: OK"
+else
+    die "PCSX2 portable configuration is missing."
 fi
 
 echo
-echo "BareFront launch command will later use:"
-echo "  -batch -slowboot {rom}"
+echo "BareFront PS2 launch path:"
+echo "  $PCSX2_LAUNCHER {rom}"
 echo
-echo "-batch makes PCSX2 exit when emulation ends."
-echo "-slowboot preserves the normal PS2 BIOS/startup sequence."
+echo "The launcher:"
+echo "  - detects the game's region from its curated filename"
+echo "  - identifies installed PS2 BIOS images from ROMVER data"
+echo "  - selects a matching BIOS for each game"
+echo "  - starts PCSX2 with -portable -batch -slowboot"
 echo
-echo "PCSX2 still requires a BIOS dumped from a legitimately"
-echo "owned PlayStation 2. BareFront does not supply that file."
+echo "This preserves the authentic PS2 BIOS/startup sequence"
+echo "while supporting mixed-region curated libraries."
+echo
+echo "PCSX2 still requires BIOS images dumped from legitimately"
+echo "owned PlayStation 2 consoles. BareFront supplies no BIOS."
 echo
 echo "PCSX2 stage complete."
 
@@ -3471,8 +3839,8 @@ arguments=-batch -- {rom}
 [ps2]
 roms=roms/ps2
 screenshots=assets/games/ps2
-emulator=$PCSX2_EXE
-arguments=-batch -slowboot {rom}
+emulator=$PCSX2_LAUNCHER
+arguments={rom}
 
 [mastersystem]
 roms=roms/mastersystem
