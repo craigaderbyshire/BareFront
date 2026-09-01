@@ -898,16 +898,69 @@ else
     echo "Existing BlastEm user configuration found:"
     echo "  $BLASTEM_CONFIG"
     echo
-    echo "BareFront will preserve it unchanged."
-    echo "Action: PRESERVE USER CONFIG"
+    echo "Preserving emulator-owned settings."
+    echo "Enforcing BareFront-owned integration:"
+    echo "  Esc = exit directly to BareFront"
+    echo "  Config version = current managed BlastEm version"
 
-    if ! grep -Eq '^[[:space:]]*esc[[:space:]]+ui\.exit[[:space:]]*$' \
-        "$BLASTEM_CONFIG"
-    then
-        echo
-        echo "NOTE: Existing BlastEm config does not map Esc to ui.exit."
-        echo "BareFront has deliberately not overwritten the user's mapping."
-    fi
+    python3 - "$BLASTEM_CONFIG" "$BLASTEM_DIR/default.cfg" <<'PYBLASTEMPRESERVE'
+from pathlib import Path
+import re
+import sys
+
+config = Path(sys.argv[1])
+default = Path(sys.argv[2])
+
+default_text = default.read_text()
+
+match = re.search(
+    r"(?m)^[ \t]*version[ \t]+([0-9]+)[ \t]*$",
+    default_text,
+)
+
+if not match:
+    raise SystemExit(
+        "Managed BlastEm default.cfg has no config version"
+    )
+
+current_version = match.group(1)
+
+lines = config.read_text().splitlines()
+out = []
+
+esc_found = False
+version_found = False
+
+for line in lines:
+    stripped = line.strip()
+    indent = line[:len(line) - len(line.lstrip())]
+
+    if re.fullmatch(r"esc\s+ui\.(menu|exit)", stripped):
+        out.append(f"{indent}esc ui.exit")
+        esc_found = True
+        continue
+
+    if re.fullmatch(r"version\s+[0-9]+", stripped):
+        out.append(f"{indent}version {current_version}")
+        version_found = True
+        continue
+
+    out.append(line)
+
+if not esc_found:
+    raise SystemExit(
+        "BlastEm Esc binding was not found in existing config"
+    )
+
+if not version_found:
+    if out and out[-1] != "":
+        out.append("")
+    out.append(f"version {current_version}")
+
+config.write_text("\n".join(out) + "\n")
+PYBLASTEMPRESERVE
+
+    echo "Action: REPAIR BAREFRONT INTEGRATION"
 
 fi
 
@@ -1193,9 +1246,64 @@ mkdir -p "$MESEN_SAVE_DIR"
 if [[ -f "$MESEN_CONFIG" ]]; then
 
     echo "Existing MesenCE user configuration found."
-    echo "BareFront will not overwrite it:"
+    echo "Preserving emulator-owned settings:"
     echo "  $MESEN_CONFIG"
-    echo "Action: PRESERVE USER CONFIG"
+    echo
+    echo "Enforcing BareFront-owned integration:"
+    echo "  Esc = exit directly to BareFront"
+    echo "  Emulator screenshot hotkey = unassigned"
+
+    python3 - "$MESEN_CONFIG" <<'PYMESENPRESERVE'
+import json
+import sys
+from pathlib import Path
+
+config = Path(sys.argv[1])
+
+with config.open("r", encoding="utf-8-sig") as f:
+    data = json.load(f)
+
+preferences = data.setdefault("Preferences", {})
+shortcuts = preferences.setdefault("ShortcutKeys", [])
+
+def set_shortcut(name, key1):
+    for item in shortcuts:
+        if item.get("Shortcut") == name:
+            item["KeyCombination"] = {
+                "Key1": key1,
+                "Key2": 0,
+                "Key3": 0,
+            }
+            item["KeyCombination2"] = {
+                "Key1": 0,
+                "Key2": 0,
+                "Key3": 0,
+            }
+            return
+
+    shortcuts.append({
+        "Shortcut": name,
+        "KeyCombination": {
+            "Key1": key1,
+            "Key2": 0,
+            "Key3": 0,
+        },
+        "KeyCombination2": {
+            "Key1": 0,
+            "Key2": 0,
+            "Key3": 0,
+        },
+    })
+
+set_shortcut("Exit", 13)
+set_shortcut("TakeScreenshot", 0)
+
+with config.open("w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+PYMESENPRESERVE
+
+    echo "Action: REPAIR BAREFRONT INTEGRATION"
 
 else
 
@@ -3261,9 +3369,46 @@ echo "Creating/verifying BareFront bsnes baseline..."
 if [[ -f "$BSNES_CONFIG" ]]; then
 
     echo "Existing bsnes user configuration found."
-    echo "BareFront will not overwrite it:"
+    echo "Preserving emulator-owned settings:"
     echo "  $BSNES_CONFIG"
-    echo "Action: PRESERVE USER CONFIG"
+    echo
+    echo "Enforcing BareFront-owned integration:"
+    echo "  Esc = exit directly to BareFront"
+
+    python3 - "$BSNES_CONFIG" <<'PYBSNESPRESERVE'
+from pathlib import Path
+import re
+import sys
+
+config = Path(sys.argv[1])
+lines = config.read_text().splitlines()
+
+out = []
+found = False
+
+for line in lines:
+    match = re.fullmatch(
+        r"([ \t]*)QuitEmulator(?:[ \t]*:[ \t]*.*)?",
+        line,
+    )
+
+    if match:
+        out.append(
+            f"{match.group(1)}QuitEmulator: 0x1/0/0"
+        )
+        found = True
+    else:
+        out.append(line)
+
+if not found:
+    raise SystemExit(
+        "bsnes QuitEmulator setting was not found"
+    )
+
+config.write_text("\n".join(out) + "\n")
+PYBSNESPRESERVE
+
+    echo "Action: REPAIR BAREFRONT INTEGRATION"
 
 else
 
