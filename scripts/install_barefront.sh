@@ -2821,6 +2821,9 @@ heading "STAGE 3B / BIGPEMU"
 
 BIGPEMU_DIR="$BAREFRONT_DIR/emulators/bigpemu"
 BIGPEMU_LAUNCHER="$BIGPEMU_DIR/BigPEmu"
+BIGPEMU_WRAPPER="$BAREFRONT_DIR/scripts/launch_bigpemu.sh"
+BIGPEMU_ESC_SOURCE="$BAREFRONT_DIR/src/bigpemu_esc_helper.cpp"
+BIGPEMU_ESC_HELPER="$BIGPEMU_DIR/bigpemu_esc_helper"
 
 # BigPEmu does not currently publish releases through a package
 # manager or machine-readable release API.
@@ -3068,12 +3071,59 @@ else
     die "BigPEmu installation verification failed."
 fi
 
+
+# ------------------------------------------------------------
+# BareFront Jaguar integration
+#
+# BigPEmu reserves Esc for its own menu. BareFront therefore
+# owns Esc externally while BigPEmu is running. A tiny X11
+# helper grabs Esc and terminates only the BigPEmu process.
+# ------------------------------------------------------------
+
+echo
+echo "Configuring BareFront Jaguar integration..."
+
+if [[ ! -f "$BIGPEMU_ESC_SOURCE" ]]; then
+    die "BigPEmu Esc helper source is missing."
+fi
+
+if [[ ! -x "$BIGPEMU_WRAPPER" ]]; then
+    die "BigPEmu BareFront wrapper is missing or not executable."
+fi
+
+if [[ ! -x "$BIGPEMU_ESC_HELPER" ]] || \
+   [[ "$BIGPEMU_ESC_SOURCE" -nt "$BIGPEMU_ESC_HELPER" ]]
+then
+    echo "Building BigPEmu Esc helper..."
+
+    g++ -std=c++17 -O2 \
+        "$BIGPEMU_ESC_SOURCE" \
+        -o "$BIGPEMU_ESC_HELPER" \
+        -lX11
+
+    echo "Action: BUILD"
+else
+    echo "BigPEmu Esc helper is already current."
+    echo "Action: SKIP"
+fi
+
+if [[ ! -x "$BIGPEMU_ESC_HELPER" ]]; then
+    die "BigPEmu Esc helper build failed."
+fi
+
+echo
+echo "BareFront Jaguar launcher:"
+echo "  $BIGPEMU_WRAPPER"
+echo
+echo "BareFront-owned controls:"
+echo "  Esc = return directly to BareFront"
+
 echo
 echo "BigPEmu needs no mandatory Jaguar BIOS for normal"
 echo "cartridge-image use."
 echo
 echo "BareFront launch command will later use:"
-echo "  $BIGPEMU_LAUNCHER {rom}"
+echo "  $BIGPEMU_WRAPPER {rom}"
 echo
 echo "BigPEmu stage complete."
 
@@ -4038,7 +4088,7 @@ arguments=-force_module pce_fast {rom}
 [jaguar]
 roms=roms/jaguar
 screenshots=assets/games/jaguar
-emulator=$BIGPEMU_LAUNCHER
+emulator=$BIGPEMU_WRAPPER
 arguments={rom}
 
 [gamecube]
