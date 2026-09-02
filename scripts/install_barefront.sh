@@ -3129,6 +3129,50 @@ echo "BigPEmu stage complete."
 
 
 # ============================================================
+# Stage 3B - Dolphin integration
+# ============================================================
+
+heading "STAGE 3B / DOLPHIN"
+
+DOLPHIN_EXE="/usr/games/dolphin-emu"
+DOLPHIN_WRAPPER="$BAREFRONT_DIR/scripts/launch_dolphin.sh"
+DOLPHIN_USER_DIR="$BAREFRONT_DIR/saves/gamecube/dolphin"
+
+if [[ ! -x "$DOLPHIN_EXE" ]]; then
+    die "Dolphin executable not found: $DOLPHIN_EXE"
+fi
+
+if [[ ! -x "$DOLPHIN_WRAPPER" ]]; then
+    die "Dolphin BareFront wrapper is missing or not executable."
+fi
+
+mkdir -p \
+    "$BAREFRONT_DIR/bios/gamecube/EUR" \
+    "$BAREFRONT_DIR/bios/gamecube/USA" \
+    "$BAREFRONT_DIR/bios/gamecube/JAP" \
+    "$DOLPHIN_USER_DIR/GC/EUR" \
+    "$DOLPHIN_USER_DIR/GC/USA" \
+    "$DOLPHIN_USER_DIR/GC/JAP"
+
+for REGION in EUR USA JAP; do
+    IPL_LINK="$DOLPHIN_USER_DIR/GC/$REGION/IPL.bin"
+    EXPECTED_TARGET="../../../../../bios/gamecube/$REGION/IPL.bin"
+
+    if [[ -L "$IPL_LINK" ]]; then
+        if [[ "$(readlink "$IPL_LINK")" != "$EXPECTED_TARGET" ]]; then
+            die "Unexpected Dolphin $REGION IPL link: $IPL_LINK"
+        fi
+    elif [[ -e "$IPL_LINK" ]]; then
+        die "Unmanaged Dolphin $REGION IPL path exists: $IPL_LINK"
+    else
+        ln -s "$EXPECTED_TARGET" "$IPL_LINK"
+    fi
+done
+
+echo "Dolphin integration stage complete."
+
+
+# ============================================================
 # Stage 3B - Locally managed emulators
 # Part 6: bsnes v115
 # ============================================================
@@ -4094,8 +4138,8 @@ arguments={rom}
 [gamecube]
 roms=roms/gamecube
 screenshots=assets/games/gamecube
-emulator=/usr/games/dolphin-emu
-arguments=-b -e {rom}
+emulator=$DOLPHIN_WRAPPER
+arguments={rom}
 
 [amiga]
 roms=roms/amiga
@@ -4674,7 +4718,28 @@ pass "Super NES"     "No firmware required"
 pass "Master System" "No firmware required"
 pass "Atari 2600"    "No firmware required"
 pass "Atari Jaguar"  "No mandatory firmware required"
-pass "GameCube"      "No external BIOS required"
+
+
+# ------------------------------------------------------------
+# GameCube
+#
+# Dolphin can boot without an external IPL, but BareFront uses
+# a real regional IPL to preserve the authentic startup screen.
+# ------------------------------------------------------------
+
+GC_IPL_REGIONS=()
+
+for REGION in EUR USA JAP; do
+    if [[ -f "$ROOT/bios/gamecube/$REGION/IPL.bin" ]]; then
+        GC_IPL_REGIONS+=("$REGION")
+    fi
+done
+
+if [[ "${#GC_IPL_REGIONS[@]}" -gt 0 ]]; then
+    pass "GameCube" "IPL present for: ${GC_IPL_REGIONS[*]}"
+else
+    fail "GameCube" "IPL missing - add bios/gamecube/<region>/IPL.bin"
+fi
 
 
 # ------------------------------------------------------------

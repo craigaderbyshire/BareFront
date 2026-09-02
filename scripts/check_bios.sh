@@ -98,7 +98,28 @@ pass "Super NES"     "No firmware required"
 pass "Master System" "No firmware required"
 pass "Atari 2600"    "No firmware required"
 pass "Atari Jaguar"  "No mandatory firmware required"
-pass "GameCube"      "No external BIOS required"
+
+
+# ------------------------------------------------------------
+# GameCube
+#
+# Dolphin can boot without an external IPL, but BareFront uses
+# a real regional IPL to preserve the authentic startup screen.
+# ------------------------------------------------------------
+
+GC_IPL_REGIONS=()
+
+for REGION in EUR USA JAP; do
+    if [[ -f "$ROOT/bios/gamecube/$REGION/IPL.bin" ]]; then
+        GC_IPL_REGIONS+=("$REGION")
+    fi
+done
+
+if [[ "${#GC_IPL_REGIONS[@]}" -gt 0 ]]; then
+    pass "GameCube" "IPL present for: ${GC_IPL_REGIONS[*]}"
+else
+    fail "GameCube" "IPL missing - add bios/gamecube/<region>/IPL.bin"
+fi
 
 
 # ------------------------------------------------------------

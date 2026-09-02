@@ -93,8 +93,8 @@ arguments={rom}
 [gamecube]
 roms=roms/gamecube
 screenshots=assets/games/gamecube
-emulator=/usr/games/dolphin-emu
-arguments=-b -e {rom}
+emulator=scripts/launch_dolphin.sh
+arguments={rom}
 
 [amiga]
 roms=roms/amiga
