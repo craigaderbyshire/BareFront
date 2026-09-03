@@ -99,5 +99,5 @@ arguments={rom}
 [amiga]
 roms=roms/amiga
 screenshots=assets/games/amiga
-emulator=/usr/bin/amiberry
-arguments=-G {rom}
+emulator=scripts/launch_amiberry.sh
+arguments={rom}

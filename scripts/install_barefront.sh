@@ -3548,6 +3548,11 @@ AMIBERRY_EXE="/usr/bin/amiberry"
 AMIBERRY_LOCAL_DIR="$BAREFRONT_DIR/emulators/amiberry"
 AMIBERRY_CONF="$AMIBERRY_LOCAL_DIR/amiberry.conf"
 AMIBERRY_LAUNCHER="$BAREFRONT_DIR/scripts/launch_amiberry.sh"
+AMIBERRY_ESC_SOURCE="$BAREFRONT_DIR/src/amiberry_esc_helper.cpp"
+AMIBERRY_ESC_HELPER="$AMIBERRY_LOCAL_DIR/amiberry_esc_helper"
+AMIBERRY_PROFILE="$BAREFRONT_DIR/saves/amiga/amiberry"
+AMIBERRY_WHD_SOURCE="/usr/share/amiberry/whdboot"
+AMIBERRY_WHD_BOOT="$AMIBERRY_PROFILE/xdg-data/amiberry/WHDBoot"
 
 echo "BareFront uses Amiberry for:"
 echo "  Amiga"
@@ -3678,12 +3683,95 @@ echo "  ${AMIBERRY_PACKAGE_VERSION:-Unknown}"
 mkdir -p \
     "$AMIBERRY_LOCAL_DIR" \
     "$AMIBERRY_LOCAL_DIR/conf" \
+    "$AMIBERRY_PROFILE/home" \
+    "$AMIBERRY_PROFILE/xdg-config" \
+    "$AMIBERRY_PROFILE/xdg-data" \
+    "$AMIBERRY_WHD_BOOT" \
     "$BAREFRONT_DIR/roms/amiga" \
     "$BAREFRONT_DIR/bios/amiga" \
     "$BAREFRONT_DIR/saves/amiga/savestates" \
     "$BAREFRONT_DIR/saves/amiga/nvram" \
     "$BAREFRONT_DIR/saves/amiga/saveimages" \
     "$BAREFRONT_DIR/assets/games/amiga"
+
+
+# ------------------------------------------------------------
+# Seed Amiberry's WHDLoad Booter runtime
+#
+# The Debian package provides the runtime files. Copy only files
+# which are not already present so reinstalling BareFront cannot
+# overwrite WHDLoad saves or a database updated by the user.
+# ------------------------------------------------------------
+
+if [[ ! -d "$AMIBERRY_WHD_SOURCE" ]]; then
+    die "Amiberry WHDLoad runtime not found: $AMIBERRY_WHD_SOURCE"
+fi
+
+echo
+echo "Seeding BareFront WHDLoad runtime..."
+
+cp -a --no-clobber \
+    "$AMIBERRY_WHD_SOURCE/." \
+    "$AMIBERRY_WHD_BOOT/"
+
+AMIBERRY_WHD_REQUIRED=(
+    AmiQuit
+    boot-data.zip
+    game-data/whdload_db.json
+    JST
+    WHDLoad
+)
+
+for REQUIRED_FILE in "${AMIBERRY_WHD_REQUIRED[@]}"; do
+    if [[ ! -f "$AMIBERRY_WHD_BOOT/$REQUIRED_FILE" ]]; then
+        die "Missing WHDLoad runtime file: $REQUIRED_FILE"
+    fi
+done
+
+echo "  WHDLoad runtime: OK"
+
+
+# ------------------------------------------------------------
+# Build the BareFront Amiberry Escape helper
+#
+# It watches the raw XInput2 keyboard stream so Esc still works
+# while Amiberry owns keyboard focus, then requests a clean exit
+# through Amiberry's Unix-domain IPC socket.
+# ------------------------------------------------------------
+
+if [[ ! -f "$AMIBERRY_ESC_SOURCE" ]]; then
+    die "Amiberry Escape helper source missing: $AMIBERRY_ESC_SOURCE"
+fi
+
+if [[ ! -x "$AMIBERRY_ESC_HELPER" ]] ||
+   [[ "$AMIBERRY_ESC_SOURCE" -nt "$AMIBERRY_ESC_HELPER" ]]
+then
+    echo
+    echo "Building BareFront Amiberry Escape helper..."
+
+    if ! g++ \
+        -std=c++17 \
+        -O2 \
+        -Wall \
+        -Wextra \
+        -pedantic \
+        "$AMIBERRY_ESC_SOURCE" \
+        -o "$AMIBERRY_ESC_HELPER" \
+        -lX11 \
+        -lXi
+    then
+        die "Could not build the Amiberry Escape helper."
+    fi
+
+    echo "  Action: BUILD"
+else
+    echo "  Escape helper is already built and current."
+    echo "  Action: SKIP"
+fi
+
+if [[ ! -x "$AMIBERRY_ESC_HELPER" ]]; then
+    die "Amiberry Escape helper verification failed."
+fi
 
 
 # ------------------------------------------------------------
@@ -3727,42 +3815,27 @@ echo "  $AMIBERRY_CONF"
 
 
 # ------------------------------------------------------------
-# Generate a small BareFront launcher wrapper
+# Verify the tracked BareFront launcher wrapper
 #
-# Why a wrapper?
-#
-# /usr/bin/amiberry is owned by Debian/APT and should stay that
-# way. The wrapper adds BareFront's custom configuration without
-# modifying the system-installed executable.
+# /usr/bin/amiberry is owned by Debian/APT and remains untouched.
+# The tracked wrapper supplies BareFront's isolated profile,
+# automatic media loading and clean Esc-to-IPC shutdown.
 # ------------------------------------------------------------
 
 echo
-echo "Creating BareFront Amiberry launcher..."
+echo "Verifying BareFront Amiberry launcher..."
 
-cat > "$AMIBERRY_LAUNCHER" <<'EOF'
-#!/bin/bash
-
-set -Eeuo pipefail
-
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ROM="${1:-}"
-
-if [[ -z "$ROM" ]]; then
-    echo "Usage: launch_amiberry.sh <game-file>" >&2
-    exit 1
+if [[ ! -f "$AMIBERRY_LAUNCHER" ]]; then
+    die "Tracked Amiberry launcher is missing: $AMIBERRY_LAUNCHER"
 fi
-
-CONF="$ROOT/emulators/amiberry/amiberry.conf"
-
-exec /usr/bin/amiberry \
-    -o "amiberry_config=$CONF" \
-    -G \
-    "$ROM"
-EOF
 
 chmod +x "$AMIBERRY_LAUNCHER"
 
-echo "  Launcher:"
+if [[ ! -x "$AMIBERRY_LAUNCHER" ]]; then
+    die "Amiberry launcher is not executable: $AMIBERRY_LAUNCHER"
+fi
+
+echo "  Launcher: OK"
 echo "  $AMIBERRY_LAUNCHER"
 
 
@@ -3777,6 +3850,9 @@ echo
 echo "Checking Amiberry resolved paths..."
 
 AMIBERRY_PATH_DUMP="$(
+    AMIBERRY_HOME_DIR="$AMIBERRY_PROFILE/home" \
+    XDG_CONFIG_HOME="$AMIBERRY_PROFILE/xdg-config" \
+    XDG_DATA_HOME="$AMIBERRY_PROFILE/xdg-data" \
     "$AMIBERRY_EXE" \
         -o "amiberry_config=$AMIBERRY_CONF" \
         --dump-paths \
@@ -3785,6 +3861,25 @@ AMIBERRY_PATH_DUMP="$(
 
 printf '%s\n' "$AMIBERRY_PATH_DUMP" \
     | sed 's/^/  /'
+
+AMIBERRY_EXPECTED_PATHS=(
+    "settings_dir=$AMIBERRY_PROFILE/xdg-config/amiberry"
+    "home_dir=$AMIBERRY_PROFILE/home"
+    "controllers_path=$AMIBERRY_PROFILE/xdg-data/amiberry/Controllers/"
+    "whdboot_path=$AMIBERRY_WHD_BOOT/"
+)
+
+for EXPECTED_PATH in "${AMIBERRY_EXPECTED_PATHS[@]}"; do
+    if ! grep -Fqx \
+        "$EXPECTED_PATH" \
+        <<< "$AMIBERRY_PATH_DUMP"
+    then
+        die "Amiberry path isolation failed: $EXPECTED_PATH"
+    fi
+done
+
+echo
+echo "  BareFront path isolation: OK"
 
 
 # ------------------------------------------------------------
@@ -3818,6 +3913,9 @@ Executable: /usr/bin/amiberry
 Source: https://packages.amiberry.com/
 BareFront config: $AMIBERRY_CONF
 BareFront launcher: $AMIBERRY_LAUNCHER
+BareFront profile: $AMIBERRY_PROFILE
+WHDLoad runtime: $AMIBERRY_WHD_BOOT
+Escape helper: $AMIBERRY_ESC_HELPER
 EOF
 
 
@@ -3846,9 +3944,26 @@ else
     die "Amiberry BareFront launcher was not created."
 fi
 
+if [[ -x "$AMIBERRY_ESC_HELPER" ]]; then
+    echo "  Escape helper: OK"
+else
+    die "Amiberry Escape helper verification failed."
+fi
+
+if [[ -f "$AMIBERRY_WHD_BOOT/boot-data.zip" ]] &&
+   [[ -f "$AMIBERRY_WHD_BOOT/game-data/whdload_db.json" ]]
+then
+    echo "  WHDLoad runtime: OK"
+else
+    die "Amiberry WHDLoad runtime verification failed."
+fi
+
 echo
 echo "BareFront launch command will later use:"
 echo "  $AMIBERRY_LAUNCHER {rom}"
+echo
+echo "BareFront-owned controls:"
+echo "  Esc = return directly to BareFront"
 echo
 echo "Amiberry stage complete."
 
