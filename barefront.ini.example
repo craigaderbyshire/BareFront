@@ -81,8 +81,8 @@ arguments=-force_module ss {rom}
 [pcengine]
 roms=roms/pcengine
 screenshots=assets/games/pcengine
-emulator=/usr/games/mednafen
-arguments=-force_module pce_fast {rom}
+emulator=scripts/launch_mednafen_pce.sh
+arguments={rom}
 
 [jaguar]
 roms=roms/jaguar

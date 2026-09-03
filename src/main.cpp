@@ -3241,7 +3241,7 @@ int main()
             "assets/systems/pcengine.png",
             "testroms/pcengine",
             "assets/games/pcengine",
-            { ".pce", ".cue", ".chd", ".zip" }
+            { ".pce", ".sgx", ".cue", ".ccd", ".toc", ".m3u", ".zip" }
         },
 
         {

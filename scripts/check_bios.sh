@@ -283,10 +283,10 @@ fi
 
 PCENGINE_DIR="$ROOT/bios/pcengine"
 
-if has_any_file "$PCENGINE_DIR"; then
-    pass "PC Engine" "Optional CD/System Card firmware present"
+if [[ -f "$PCENGINE_DIR/syscard3.pce" ]]; then
+    pass "PC Engine" "System Card 3 present for CD games"
 else
-    warn "PC Engine" "HuCards ready; CD games may need System Card firmware"
+    warn "PC Engine" "HuCards ready; add syscard3.pce for CD games"
 fi
 
 

@@ -3969,6 +3969,158 @@ echo "Amiberry stage complete."
 
 
 # ============================================================
+# Stage 3B - PC Engine / Mednafen integration
+# ============================================================
+
+heading "STAGE 3B / PC ENGINE"
+
+MEDNAFEN_PCE_EXE="/usr/games/mednafen"
+MEDNAFEN_PCE_LOCAL_DIR="$BAREFRONT_DIR/emulators/mednafen"
+MEDNAFEN_PCE_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mednafen_pce.sh"
+MEDNAFEN_PCE_PROFILE="$BAREFRONT_DIR/saves/pcengine/mednafen"
+MEDNAFEN_PCE_CONFIG="$MEDNAFEN_PCE_PROFILE/mednafen.cfg"
+
+echo "Configuring BareFront PC Engine integration..."
+echo
+
+if [[ ! -x "$MEDNAFEN_PCE_EXE" ]]; then
+    die "Mednafen executable not found: $MEDNAFEN_PCE_EXE"
+fi
+
+if [[ ! -f "$MEDNAFEN_PCE_LAUNCHER" ]]; then
+    die "Tracked PC Engine launcher missing: $MEDNAFEN_PCE_LAUNCHER"
+fi
+
+chmod +x "$MEDNAFEN_PCE_LAUNCHER"
+
+if [[ ! -x "$MEDNAFEN_PCE_LAUNCHER" ]]; then
+    die "PC Engine launcher is not executable."
+fi
+
+mkdir -p \
+    "$MEDNAFEN_PCE_LOCAL_DIR" \
+    "$MEDNAFEN_PCE_PROFILE" \
+    "$BAREFRONT_DIR/bios/pcengine" \
+    "$BAREFRONT_DIR/roms/pcengine" \
+    "$BAREFRONT_DIR/saves/pcengine" \
+    "$BAREFRONT_DIR/assets/games/pcengine"
+
+if [[ ! -f "$MEDNAFEN_PCE_CONFIG" ]]; then
+    echo "Creating isolated Mednafen profile..."
+
+    MEDNAFEN_HOME="$MEDNAFEN_PCE_PROFILE" \
+        "$MEDNAFEN_PCE_EXE" -help \
+        > "$LOG_DIR/mednafen-pcengine-profile.log" \
+        2>&1 || true
+
+    echo "  Action: CREATE"
+else
+    echo "Isolated Mednafen profile already exists."
+    echo "  Action: PRESERVE"
+fi
+
+if [[ ! -f "$MEDNAFEN_PCE_CONFIG" ]]; then
+    die "Mednafen did not create the PC Engine profile."
+fi
+
+MEDNAFEN_PCE_CONFIG_PATH="$MEDNAFEN_PCE_CONFIG" python3 - <<'PYMEDNAFEN'
+import os
+from pathlib import Path
+
+path = Path(os.environ["MEDNAFEN_PCE_CONFIG_PATH"])
+original = path.read_text()
+lines = original.splitlines()
+
+enforced = {
+    "command.exit": "keyboard 0x0 41",
+}
+
+defaults = {
+    "pce_fast.input.port1.gamepad.up": "keyboard 0x0 82",
+    "pce_fast.input.port1.gamepad.down": "keyboard 0x0 81",
+    "pce_fast.input.port1.gamepad.left": "keyboard 0x0 80",
+    "pce_fast.input.port1.gamepad.right": "keyboard 0x0 79",
+    "pce_fast.input.port1.gamepad.i": "keyboard 0x0 27",
+    "pce_fast.input.port1.gamepad.ii": "keyboard 0x0 29",
+    "pce_fast.input.port1.gamepad.run": "keyboard 0x0 40",
+    "pce_fast.input.port1.gamepad.select": "keyboard 0x0 43",
+}
+
+seen = set()
+
+for index, line in enumerate(lines):
+    parts = line.split(None, 1)
+
+    if not parts:
+        continue
+
+    key = parts[0]
+
+    if key in enforced:
+        lines[index] = f"{key} {enforced[key]}"
+        seen.add(key)
+    elif key in defaults:
+        seen.add(key)
+
+        if len(parts) == 1 or not parts[1].strip():
+            lines[index] = f"{key} {defaults[key]}"
+
+for key, value in {**enforced, **defaults}.items():
+    if key not in seen:
+        lines.append(f"{key} {value}")
+
+updated = "\n".join(lines) + "\n"
+
+if updated != original:
+    path.write_text(updated)
+
+resolved = {}
+
+for line in lines:
+    parts = line.split(None, 1)
+
+    if len(parts) == 2:
+        resolved[parts[0]] = parts[1].strip()
+
+if resolved.get("command.exit") != enforced["command.exit"]:
+    raise SystemExit("Could not enforce Mednafen Esc binding")
+
+for key in defaults:
+    if not resolved.get(key):
+        raise SystemExit(f"Empty Mednafen input binding: {key}")
+
+print("  Keyboard controls: OK")
+print("  Esc exit binding: OK")
+PYMEDNAFEN
+
+MEDNAFEN_PCE_PACKAGE_VERSION="$(
+    dpkg-query -W -f='${Version}' mednafen 2>/dev/null || true
+)"
+
+cat > "$MEDNAFEN_PCE_LOCAL_DIR/PCENGINE_VERSION.txt" <<EOF
+BareFront managed emulator integration
+System: PC Engine / TurboGrafx-16 / SuperGrafx / CD
+Emulator: Mednafen
+Package version: ${MEDNAFEN_PCE_PACKAGE_VERSION:-Unknown}
+Executable: $MEDNAFEN_PCE_EXE
+BareFront launcher: $MEDNAFEN_PCE_LAUNCHER
+BareFront profile: $MEDNAFEN_PCE_PROFILE
+CD BIOS path: $BAREFRONT_DIR/bios/pcengine/syscard3.pce
+EOF
+
+echo
+echo "Verifying PC Engine integration..."
+echo "  System executable: OK"
+echo "  BareFront launcher: OK"
+echo "  Isolated profile: OK"
+echo
+echo "BareFront-owned controls:"
+echo "  Esc = return directly to BareFront"
+echo
+echo "PC Engine integration stage complete."
+
+
+# ============================================================
 # Stage 4 - Production BareFront configuration
 # ============================================================
 
@@ -4241,8 +4393,8 @@ arguments=-force_module ss {rom}
 [pcengine]
 roms=roms/pcengine
 screenshots=assets/games/pcengine
-emulator=/usr/games/mednafen
-arguments=-force_module pce_fast {rom}
+emulator=$MEDNAFEN_PCE_LAUNCHER
+arguments={rom}
 
 [jaguar]
 roms=roms/jaguar
@@ -5018,10 +5170,10 @@ fi
 
 PCENGINE_DIR="$ROOT/bios/pcengine"
 
-if has_any_file "$PCENGINE_DIR"; then
-    pass "PC Engine" "Optional CD/System Card firmware present"
+if [[ -f "$PCENGINE_DIR/syscard3.pce" ]]; then
+    pass "PC Engine" "System Card 3 present for CD games"
 else
-    warn "PC Engine" "HuCards ready; CD games may need System Card firmware"
+    warn "PC Engine" "HuCards ready; add syscard3.pce for CD games"
 fi
 
 
@@ -5219,6 +5371,7 @@ echo "  Dreamcast BIOS/flash runtime layout"
 echo "  BigPEmu pinned stable installation / verification"
 echo "  bsnes v115 stable-source build / verification"
 echo "  Amiberry official Debian-package installation / integration"
+echo "  PC Engine Mednafen launcher / isolated profile"
 echo "  VICE BareFront launcher adapter"
 echo "  MAME Arcade / Neo Geo launcher adapter"
 echo "  Production barefront.ini generation / validation"
