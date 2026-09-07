@@ -1958,7 +1958,45 @@ if [[ ! -f "$PCSX2_INI" ]]; then
     echo
     echo "Creating initial PCSX2 portable configuration..."
 
-    if ! "$PCSX2_EXE" -portable -testconfig; then
+    PCSX2_CONFIG_ENV=()
+
+    # A remote SSH shell has no graphical-session variables,
+    # even when the same user has an active local desktop.
+    #
+    # PCSX2 still needs that desktop while generating its initial
+    # Qt configuration. Discover the user's primary local session
+    # without changing the environment used by the rest of the
+    # installer.
+    if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
+
+        PCSX2_SESSION_ID="$(
+            loginctl show-user "$(id -un)" --property=Display --value 2>/dev/null || true
+        )"
+
+        PCSX2_LOCAL_DISPLAY="$(
+            loginctl show-session "$PCSX2_SESSION_ID" --property=Display --value 2>/dev/null || true
+        )"
+
+        if [[ -z "$PCSX2_LOCAL_DISPLAY" ]]; then
+            die "PCSX2 initial configuration needs an active graphical desktop."
+        fi
+
+        PCSX2_CONFIG_ENV+=(
+            "DISPLAY=$PCSX2_LOCAL_DISPLAY"
+        )
+
+        if [[ -f "$HOME/.Xauthority" ]]; then
+            PCSX2_CONFIG_ENV+=(
+                "XAUTHORITY=$HOME/.Xauthority"
+            )
+        fi
+
+        echo "  Using local graphical session: $PCSX2_LOCAL_DISPLAY"
+
+    fi
+
+    if ! env "${PCSX2_CONFIG_ENV[@]}"         "$PCSX2_EXE" -portable -testconfig
+    then
         die "PCSX2 failed to create its initial portable configuration."
     fi
 
