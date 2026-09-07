@@ -1907,7 +1907,7 @@ std::vector<fs::path> scanGames(
     }
 
     for (const auto& entry :
-         fs::directory_iterator(folder))
+         fs::recursive_directory_iterator(folder))
     {
         if (!entry.is_regular_file())
             continue;
