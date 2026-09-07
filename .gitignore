@@ -19,6 +19,7 @@ assets/videos/
 # Built BareFront executables
 /barefront
 /capture_helper
+/overlay_helper
 
 # Machine-specific live configuration
 barefront.ini

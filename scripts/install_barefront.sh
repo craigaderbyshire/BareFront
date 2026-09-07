@@ -230,6 +230,8 @@ GRAPHICS_PACKAGES=(
     libfuse2t64
     libx11-dev
     libxi-dev
+    libxfixes-dev
+    libxrender-dev
 )
 
 ALL_PACKAGES=(
@@ -5617,9 +5619,15 @@ heading "STAGE 6 / BUILD BAREFRONT"
 
 BUILD_SCRIPT="$BAREFRONT_DIR/scripts/build_barefront.sh"
 BAREFRONT_BINARY="$BAREFRONT_DIR/barefront"
+OVERLAY_SOURCE="$BAREFRONT_DIR/src/overlay_helper.cpp"
+OVERLAY_BINARY="$BAREFRONT_DIR/overlay_helper"
 
 if [[ ! -x "$BUILD_SCRIPT" ]]; then
     die "BareFront build script is missing or not executable: $BUILD_SCRIPT"
+fi
+
+if [[ ! -f "$OVERLAY_SOURCE" ]]; then
+    die "BareFront overlay helper source is missing: $OVERLAY_SOURCE"
 fi
 
 echo "Building BareFront from source..."
@@ -5629,9 +5637,15 @@ if [[ ! -x "$BAREFRONT_BINARY" ]]; then
     die "BareFront build completed without producing an executable: $BAREFRONT_BINARY"
 fi
 
+if [[ ! -x "$OVERLAY_BINARY" ]]; then
+    die "BareFront build completed without producing the overlay helper: $OVERLAY_BINARY"
+fi
+
 echo
 echo "BareFront executable verified:"
 echo "  $BAREFRONT_BINARY"
+echo "Presentation overlay helper verified:"
+echo "  $OVERLAY_BINARY"
 echo
 echo "Stage 6 BareFront build complete."
 

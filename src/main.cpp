@@ -1833,6 +1833,73 @@ void launchGame(
     }
 
 
+    // --------------------------------------------------
+    // Start the Gamescope presentation overlay.
+    //
+    // The helper is deliberately optional: if it is missing,
+    // games still launch normally.
+    //
+    // Only start it when BareFront itself was launched through
+    // the Gamescope presentation path.  This prevents the test
+    // overlay appearing when BareFront is run directly on X11.
+    // --------------------------------------------------
+
+    pid_t overlayHelperPid =
+        -1;
+
+
+    const fs::path overlayHelper =
+        "./overlay_helper";
+
+
+    const char* gamescopeEnvironment =
+        std::getenv(
+            "BAREFRONT_GAMESCOPE_CAPTURE"
+        );
+
+
+    const bool gamescopeActive =
+        gamescopeEnvironment &&
+        std::string(gamescopeEnvironment) == "1";
+
+
+    if (gamescopeActive)
+    {
+        if (fs::exists(overlayHelper))
+        {
+            overlayHelperPid =
+                fork();
+
+
+            if (overlayHelperPid == 0)
+            {
+                execl(
+                    overlayHelper.c_str(),
+                    overlayHelper.c_str(),
+                    static_cast<char*>(nullptr)
+                );
+
+                // execl only returns if it failed.
+                _exit(127);
+            }
+
+
+            if (overlayHelperPid < 0)
+            {
+                std::cerr
+                    << "Unable to start overlay helper\n";
+            }
+        }
+        else
+        {
+            std::cerr
+                << "Overlay helper not found: "
+                << overlayHelper
+                << " (overlay disabled)\n";
+        }
+    }
+
+
     std::string arguments =
         system.arguments;
 
@@ -1871,7 +1938,24 @@ void launchGame(
     );
 
 
-    // Emulator has closed: stop the helper cleanly.
+    // Emulator has closed: remove the presentation overlay
+    // before BareFront becomes visible again.
+    if (overlayHelperPid > 0)
+    {
+        kill(
+            overlayHelperPid,
+            SIGTERM
+        );
+
+        waitpid(
+            overlayHelperPid,
+            nullptr,
+            0
+        );
+    }
+
+
+    // Stop the capture helper cleanly.
     if (captureHelperPid > 0)
     {
         kill(
