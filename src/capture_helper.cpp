@@ -72,6 +72,7 @@ struct CaptureRect
 
 bool getActiveWindowRect(
     Display* display,
+    Window& captureWindow,
     CaptureRect& rect)
 {
     if (!display)
@@ -167,60 +168,21 @@ bool getActiveWindowRect(
     }
 
 
-    int rootX = 0;
-    int rootY = 0;
-    Window child = None;
+    // Capture coordinates are relative to this window.
+    captureWindow =
+        active;
 
-
-    XTranslateCoordinates(
-        display,
-        active,
-        root,
-        0,
-        0,
-        &rootX,
-        &rootY,
-        &child
-    );
-
-
-    const int screenWidth =
-        DisplayWidth(
-            display,
-            DefaultScreen(display)
-        );
-
-    const int screenHeight =
-        DisplayHeight(
-            display,
-            DefaultScreen(display)
-        );
-
-
-    // Keep the requested X11-grab rectangle inside the screen.
     rect.x =
-        std::max(
-            0,
-            rootX
-        );
+        0;
 
     rect.y =
-        std::max(
-            0,
-            rootY
-        );
+        0;
 
     rect.w =
-        std::min(
-            attributes.width,
-            screenWidth - rect.x
-        );
+        attributes.width;
 
     rect.h =
-        std::min(
-            attributes.height,
-            screenHeight - rect.y
-        );
+        attributes.height;
 
 
     return rect.w > 0 &&
@@ -430,6 +392,7 @@ bool rowIsBlack(
 
 CaptureRect detectGameContentRect(
     Display* display,
+    Window captureWindow,
     const CaptureRect& windowRect)
 {
     CaptureRect result =
@@ -439,16 +402,40 @@ CaptureRect detectGameContentRect(
         return result;
 
 
-    Window root =
-        DefaultRootWindow(
-            display
+    // Gamescope's nested Xwayland server can reject a root-window
+    // XGetImage request. Trap that X11 error and retain the full
+    // active-window rectangle instead of terminating the helper.
+    static bool imageGrabFailed =
+        false;
+
+    imageGrabFailed =
+        false;
+
+
+    // Flush earlier requests so the temporary handler applies only
+    // to this image grab.
+    XSync(
+        display,
+        False
+    );
+
+
+    XErrorHandler previousErrorHandler =
+        XSetErrorHandler(
+            [](Display*, XErrorEvent*)
+            {
+                imageGrabFailed =
+                    true;
+
+                return 0;
+            }
         );
 
 
     XImage* image =
         XGetImage(
             display,
-            root,
+            captureWindow,
             windowRect.x,
             windowRect.y,
             static_cast<unsigned int>(
@@ -462,8 +449,29 @@ CaptureRect detectGameContentRect(
         );
 
 
-    if (!image)
+    XSync(
+        display,
+        False
+    );
+
+
+    XSetErrorHandler(
+        previousErrorHandler
+    );
+
+
+    if (imageGrabFailed ||
+        !image)
+    {
+        if (image)
+        {
+            XDestroyImage(
+                image
+            );
+        }
+
         return result;
+    }
 
 
     int left = 0;
@@ -722,9 +730,13 @@ void takeSnapshot(
 {
     CaptureRect rect;
 
+    Window captureWindow =
+        None;
+
 
     if (!getActiveWindowRect(
             display,
+            captureWindow,
             rect))
     {
         std::cerr
@@ -737,6 +749,7 @@ void takeSnapshot(
     rect =
         detectGameContentRect(
             display,
+            captureWindow,
             rect
         );
 
@@ -750,6 +763,14 @@ void takeSnapshot(
         std::to_string(rect.w) +
         "x" +
         std::to_string(rect.h);
+
+
+    std::string windowId =
+        std::to_string(
+            static_cast<unsigned long long>(
+                captureWindow
+            )
+        );
 
 
     const char* displayEnvironment =
@@ -791,6 +812,8 @@ void takeSnapshot(
             "-y",
             "-f",
             "x11grab",
+            "-window_id",
+            windowId.c_str(),
             "-video_size",
             size.c_str(),
             "-draw_mouse",
@@ -852,9 +875,13 @@ pid_t startRecording(
 {
     CaptureRect rect;
 
+    Window captureWindow =
+        None;
+
 
     if (!getActiveWindowRect(
             display,
+            captureWindow,
             rect))
     {
         std::cerr
@@ -867,6 +894,7 @@ pid_t startRecording(
     rect =
         detectGameContentRect(
             display,
+            captureWindow,
             rect
         );
 
@@ -876,10 +904,153 @@ pid_t startRecording(
     );
 
 
+    const char* gamescopeCaptureEnvironment =
+        std::getenv(
+            "BAREFRONT_GAMESCOPE_CAPTURE"
+        );
+
+
+    if (gamescopeCaptureEnvironment &&
+        std::string(
+            gamescopeCaptureEnvironment
+        ) == "1")
+    {
+        fs::path recorderPath =
+            "scripts/capture_gamescope_video.sh";
+
+
+        if (access(
+                recorderPath.c_str(),
+                X_OK) != 0)
+        {
+            std::cerr
+                << "BareFront recording script is unavailable: "
+                << recorderPath
+                << "\n";
+
+            return -1;
+        }
+
+
+        int outputWidth =
+            maxWidth;
+
+        int outputHeight =
+            static_cast<int>(
+                (
+                    static_cast<long long>(
+                        rect.h
+                    ) *
+                    maxWidth
+                ) /
+                rect.w
+            );
+
+
+        if (outputHeight > maxHeight)
+        {
+            outputHeight =
+                maxHeight;
+
+            outputWidth =
+                static_cast<int>(
+                    (
+                        static_cast<long long>(
+                            rect.w
+                        ) *
+                        maxHeight
+                    ) /
+                    rect.h
+                );
+        }
+
+
+        outputWidth =
+            std::max(
+                2,
+                outputWidth -
+                    outputWidth % 2
+            );
+
+        outputHeight =
+            std::max(
+                2,
+                outputHeight -
+                    outputHeight % 2
+            );
+
+
+        std::string aspectWidth =
+            std::to_string(
+                rect.w
+            );
+
+        std::string aspectHeight =
+            std::to_string(
+                rect.h
+            );
+
+        std::string scaledWidth =
+            std::to_string(
+                outputWidth
+            );
+
+        std::string scaledHeight =
+            std::string(
+                std::to_string(
+                    outputHeight
+                )
+            );
+
+
+        pid_t gamescopePid =
+            fork();
+
+
+        if (gamescopePid == 0)
+        {
+            execl(
+                recorderPath.c_str(),
+                recorderPath.c_str(),
+                outputPath.c_str(),
+                aspectWidth.c_str(),
+                aspectHeight.c_str(),
+                scaledWidth.c_str(),
+                scaledHeight.c_str(),
+                static_cast<char*>(
+                    nullptr
+                )
+            );
+
+            _exit(127);
+        }
+
+
+        if (gamescopePid > 0)
+        {
+            std::cout
+                << "Recording 5 seconds through Gamescope: "
+                << outputPath
+                << "\n";
+        }
+
+
+        return gamescopePid;
+    }
+
+
     std::string size =
         std::to_string(rect.w) +
         "x" +
         std::to_string(rect.h);
+
+
+    std::string windowId =
+        std::to_string(
+            static_cast<unsigned long long>(
+                captureWindow
+            )
+        );
 
 
     const char* displayEnvironment =
@@ -921,6 +1092,8 @@ pid_t startRecording(
             "-y",
             "-f",
             "x11grab",
+            "-window_id",
+            windowId.c_str(),
             "-framerate",
             "30",
             "-video_size",
@@ -1114,6 +1287,30 @@ int main(
 
         XFlush(display);
     }
+
+
+    // XInput2 raw key events are not always forwarded by
+    // nested Xwayland compositors such as Gamescope.
+    //
+    // Keep the raw-event path above and also track the current
+    // P/R key state as a non-grabbing fallback.
+    KeyCode pictureKeycode =
+        XKeysymToKeycode(
+            display,
+            XK_p
+        );
+
+    KeyCode recordKeycode =
+        XKeysymToKeycode(
+            display,
+            XK_r
+        );
+
+    bool pictureKeyWasDown =
+        false;
+
+    bool recordKeyWasDown =
+        false;
 
 
     // --------------------------------------------------
@@ -1333,13 +1530,25 @@ int main(
                 if (key == XK_p ||
                     key == XK_P)
                 {
-                    picture();
+                    if (!pictureKeyWasDown)
+                    {
+                        picture();
+                    }
+
+                    pictureKeyWasDown =
+                        true;
                 }
                 else if (
                     key == XK_r ||
                     key == XK_R)
                 {
-                    record();
+                    if (!recordKeyWasDown)
+                    {
+                        record();
+                    }
+
+                    recordKeyWasDown =
+                        true;
                 }
             }
 
@@ -1349,6 +1558,69 @@ int main(
                 &event.xcookie
             );
         }
+
+
+        // Polling fallback for nested Xwayland.
+        //
+        // This does not grab the keys. Edge detection ensures
+        // that holding P or R triggers only one capture.
+        char keyState[32] = {};
+
+        XQueryKeymap(
+            display,
+            keyState
+        );
+
+        auto keyIsDown =
+            [&keyState](KeyCode keycode)
+            {
+                if (keycode == 0)
+                {
+                    return false;
+                }
+
+                const unsigned int byteIndex =
+                    keycode / 8;
+
+                const unsigned int bitIndex =
+                    keycode % 8;
+
+                return
+                    (
+                        static_cast<unsigned char>(
+                            keyState[byteIndex]
+                        ) &
+                        (1u << bitIndex)
+                    ) != 0;
+            };
+
+        bool pictureKeyIsDown =
+            keyIsDown(
+                pictureKeycode
+            );
+
+        bool recordKeyIsDown =
+            keyIsDown(
+                recordKeycode
+            );
+
+        if (pictureKeyIsDown &&
+            !pictureKeyWasDown)
+        {
+            picture();
+        }
+
+        if (recordKeyIsDown &&
+            !recordKeyWasDown)
+        {
+            record();
+        }
+
+        pictureKeyWasDown =
+            pictureKeyIsDown;
+
+        recordKeyWasDown =
+            recordKeyIsDown;
 
 
         // --------------------------------------------------

@@ -213,6 +213,14 @@ BAREFRONT_PACKAGES=(
     ffmpeg
 )
 
+CAPTURE_PACKAGES=(
+    gstreamer1.0-tools
+    gstreamer1.0-pipewire
+    gstreamer1.0-plugins-base
+    gstreamer1.0-plugins-good
+    gstreamer1.0-plugins-ugly
+)
+
 GRAPHICS_PACKAGES=(
     libgl1-mesa-dev
     libopengl0
@@ -227,6 +235,7 @@ GRAPHICS_PACKAGES=(
 ALL_PACKAGES=(
     "${BASE_PACKAGES[@]}"
     "${BAREFRONT_PACKAGES[@]}"
+    "${CAPTURE_PACKAGES[@]}"
     "${GRAPHICS_PACKAGES[@]}"
 )
 
@@ -5635,9 +5644,20 @@ heading "STAGE 7 / CAPTURE HELPER"
 
 CAPTURE_SOURCE="$BAREFRONT_DIR/src/capture_helper.cpp"
 CAPTURE_BINARY="$BAREFRONT_DIR/capture_helper"
+CAPTURE_RECORDER="$BAREFRONT_DIR/scripts/capture_gamescope_video.sh"
 
 if [[ ! -f "$CAPTURE_SOURCE" ]]; then
     die "Capture helper source is missing: $CAPTURE_SOURCE"
+fi
+
+if [[ ! -f "$CAPTURE_RECORDER" ]]; then
+    die "Gamescope capture recorder is missing: $CAPTURE_RECORDER"
+fi
+
+chmod +x "$CAPTURE_RECORDER"
+
+if [[ ! -x "$CAPTURE_RECORDER" ]]; then
+    die "Gamescope capture recorder is not executable: $CAPTURE_RECORDER"
 fi
 
 if [[ ! -x "$CAPTURE_BINARY" || "$CAPTURE_SOURCE" -nt "$CAPTURE_BINARY" ]]; then
@@ -5661,9 +5681,47 @@ if [[ ! -x "$CAPTURE_BINARY" ]]; then
     die "Capture helper build did not produce an executable: $CAPTURE_BINARY"
 fi
 
+CAPTURE_COMMANDS=(
+    ffmpeg
+    gst-launch-1.0
+    gst-inspect-1.0
+    pw-dump
+    pw-link
+    python3
+    timeout
+)
+
+for CAPTURE_COMMAND in "${CAPTURE_COMMANDS[@]}"; do
+    if ! command -v "$CAPTURE_COMMAND" >/dev/null 2>&1; then
+        die "Capture command is unavailable: $CAPTURE_COMMAND"
+    fi
+done
+
+CAPTURE_GSTREAMER_ELEMENTS=(
+    pipewiresrc
+    queue
+    videoconvert
+    videorate
+    videoscale
+    identity
+    x264enc
+    h264parse
+    mp4mux
+    filesink
+)
+
+for CAPTURE_ELEMENT in "${CAPTURE_GSTREAMER_ELEMENTS[@]}"; do
+    if ! gst-inspect-1.0 "$CAPTURE_ELEMENT" >/dev/null 2>&1; then
+        die "Required GStreamer element is unavailable: $CAPTURE_ELEMENT"
+    fi
+done
+
 echo
 echo "Capture helper verified:"
 echo "  $CAPTURE_BINARY"
+echo "Gamescope video recorder verified:"
+echo "  $CAPTURE_RECORDER"
+echo "Capture commands and GStreamer elements: OK"
 echo
 echo "Keyboard capture controls:"
 echo "  P = screenshot"

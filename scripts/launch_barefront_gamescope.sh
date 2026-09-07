@@ -75,6 +75,9 @@ then
     exit 1
 fi
 
+# Inherited by BareFront, emulator wrappers and capture_helper.
+export BAREFRONT_GAMESCOPE_CAPTURE=1
+
 echo "Starting BareFront through Gamescope..."
 echo "  Internal: ${INTERNAL_WIDTH}x${INTERNAL_HEIGHT}"
 echo "  Output:   ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}"
