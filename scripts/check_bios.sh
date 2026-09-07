@@ -259,17 +259,23 @@ fi
 # ------------------------------------------------------------
 # Sega Saturn
 #
-# Mednafen's exact accepted BIOS variants will be validated in
-# Stage 5B. For now, presence of at least one Saturn firmware file
-# is enough to tell the user whether the folder is empty.
+# Mednafen uses separate BIOS files for Japan and for
+# North America/Europe. Stage 5B will validate accepted
+# legitimate variants by size, CRC32 and SHA-256.
 # ------------------------------------------------------------
 
 SATURN_DIR="$ROOT/bios/saturn"
+SATURN_JP="$SATURN_DIR/sega_101.bin"
+SATURN_NA_EU="$SATURN_DIR/mpr-17933.bin"
 
-if has_any_file "$SATURN_DIR"; then
-    pass "Saturn" "Firmware present - recognition pending"
+if [[ -f "$SATURN_JP" && -f "$SATURN_NA_EU" ]]; then
+    pass "Saturn" "Japan and North America/Europe BIOS files present"
+elif [[ -f "$SATURN_JP" ]]; then
+    warn "Saturn" "Japan BIOS present; add mpr-17933.bin for NA/Europe"
+elif [[ -f "$SATURN_NA_EU" ]]; then
+    warn "Saturn" "NA/Europe BIOS present; add sega_101.bin for Japan"
 else
-    fail "Saturn" "BIOS missing - add firmware to bios/saturn/"
+    fail "Saturn" "BIOS missing - add sega_101.bin and mpr-17933.bin"
 fi
 
 

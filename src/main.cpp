@@ -3231,7 +3231,7 @@ int main()
             "assets/systems/saturn.png",
             "testroms/saturn",
             "assets/games/saturn",
-            { ".cue", ".chd", ".iso" }
+            { ".cue", ".ccd", ".toc", ".m3u", ".zip" }
         },
 
         {

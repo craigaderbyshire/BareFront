@@ -4121,6 +4121,171 @@ echo "PC Engine integration stage complete."
 
 
 # ============================================================
+# Stage 3C - Sega Saturn / Mednafen
+# ============================================================
+
+heading "STAGE 3C / SATURN"
+
+MEDNAFEN_SATURN_EXE="/usr/games/mednafen"
+MEDNAFEN_SATURN_LOCAL_DIR="$BAREFRONT_DIR/emulators/mednafen"
+MEDNAFEN_SATURN_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mednafen_saturn.sh"
+MEDNAFEN_SATURN_PROFILE="$BAREFRONT_DIR/saves/saturn/mednafen"
+MEDNAFEN_SATURN_CONFIG="$MEDNAFEN_SATURN_PROFILE/mednafen.cfg"
+
+echo "Configuring BareFront Saturn integration..."
+echo
+
+if [[ ! -x "$MEDNAFEN_SATURN_EXE" ]]; then
+    die "Mednafen executable not found: $MEDNAFEN_SATURN_EXE"
+fi
+
+if [[ ! -f "$MEDNAFEN_SATURN_LAUNCHER" ]]; then
+    die "Tracked Saturn launcher missing: $MEDNAFEN_SATURN_LAUNCHER"
+fi
+
+chmod +x "$MEDNAFEN_SATURN_LAUNCHER"
+
+if [[ ! -x "$MEDNAFEN_SATURN_LAUNCHER" ]]; then
+    die "Saturn launcher is not executable."
+fi
+
+mkdir -p \
+    "$MEDNAFEN_SATURN_LOCAL_DIR" \
+    "$MEDNAFEN_SATURN_PROFILE" \
+    "$BAREFRONT_DIR/bios/saturn" \
+    "$BAREFRONT_DIR/roms/saturn" \
+    "$BAREFRONT_DIR/saves/saturn" \
+    "$BAREFRONT_DIR/assets/games/saturn" \
+    "$BAREFRONT_DIR/assets/videos/saturn"
+
+if [[ ! -f "$MEDNAFEN_SATURN_CONFIG" ]]; then
+    echo "Creating isolated Mednafen profile..."
+
+    MEDNAFEN_HOME="$MEDNAFEN_SATURN_PROFILE" \
+        "$MEDNAFEN_SATURN_EXE" -help \
+        > "$LOG_DIR/mednafen-saturn-profile.log" \
+        2>&1 || true
+
+    echo "  Action: CREATE"
+else
+    echo "Isolated Mednafen profile already exists."
+    echo "  Action: PRESERVE"
+fi
+
+if [[ ! -f "$MEDNAFEN_SATURN_CONFIG" ]]; then
+    die "Mednafen did not create the Saturn profile."
+fi
+
+MEDNAFEN_SATURN_CONFIG_PATH="$MEDNAFEN_SATURN_CONFIG" python3 - <<'PYMEDNAFEN_SATURN'
+import os
+from pathlib import Path
+
+path = Path(os.environ["MEDNAFEN_SATURN_CONFIG_PATH"])
+original = path.read_text()
+lines = original.splitlines()
+
+enforced = {
+    "command.exit": "keyboard 0x0 41",
+    "ss.videoip": "0",
+    "ss.shader": "none",
+    "ss.special": "none",
+    "ss.scanlines": "0",
+}
+
+defaults = {
+    "ss.input.port1.gamepad.up": "keyboard 0x0 82",
+    "ss.input.port1.gamepad.down": "keyboard 0x0 81",
+    "ss.input.port1.gamepad.left": "keyboard 0x0 80",
+    "ss.input.port1.gamepad.right": "keyboard 0x0 79",
+    "ss.input.port1.gamepad.a": "keyboard 0x0 29",
+    "ss.input.port1.gamepad.b": "keyboard 0x0 27",
+    "ss.input.port1.gamepad.c": "keyboard 0x0 6",
+    "ss.input.port1.gamepad.x": "keyboard 0x0 4",
+    "ss.input.port1.gamepad.y": "keyboard 0x0 22",
+    "ss.input.port1.gamepad.z": "keyboard 0x0 7",
+    "ss.input.port1.gamepad.ls": "keyboard 0x0 20",
+    "ss.input.port1.gamepad.rs": "keyboard 0x0 8",
+    "ss.input.port1.gamepad.start": "keyboard 0x0 40",
+}
+
+seen = set()
+
+for index, line in enumerate(lines):
+    parts = line.split(None, 1)
+
+    if not parts:
+        continue
+
+    key = parts[0]
+
+    if key in enforced:
+        lines[index] = f"{key} {enforced[key]}"
+        seen.add(key)
+    elif key in defaults:
+        seen.add(key)
+
+        if len(parts) == 1 or not parts[1].strip():
+            lines[index] = f"{key} {defaults[key]}"
+
+for key, value in {**enforced, **defaults}.items():
+    if key not in seen:
+        lines.append(f"{key} {value}")
+
+updated = "\n".join(lines) + "\n"
+
+if updated != original:
+    path.write_text(updated)
+
+resolved = {}
+
+for line in lines:
+    parts = line.split(None, 1)
+
+    if len(parts) == 2:
+        resolved[parts[0]] = parts[1].strip()
+
+for key, value in enforced.items():
+    if resolved.get(key) != value:
+        raise SystemExit(f"Could not enforce Saturn setting: {key}")
+
+for key in defaults:
+    if not resolved.get(key):
+        raise SystemExit(f"Empty Saturn input binding: {key}")
+
+print("  Keyboard controls: OK")
+print("  No visual filtering: OK")
+print("  Esc exit binding: OK")
+PYMEDNAFEN_SATURN
+
+MEDNAFEN_SATURN_PACKAGE_VERSION="$(
+    dpkg-query -W -f='${Version}' mednafen 2>/dev/null || true
+)"
+
+cat > "$MEDNAFEN_SATURN_LOCAL_DIR/SATURN_VERSION.txt" <<EOF
+BareFront managed emulator integration
+System: Sega Saturn
+Emulator: Mednafen
+Package version: ${MEDNAFEN_SATURN_PACKAGE_VERSION:-Unknown}
+Executable: $MEDNAFEN_SATURN_EXE
+BareFront launcher: $MEDNAFEN_SATURN_LAUNCHER
+BareFront profile: $MEDNAFEN_SATURN_PROFILE
+North America / Europe BIOS: $BAREFRONT_DIR/bios/saturn/mpr-17933.bin
+Japan BIOS: $BAREFRONT_DIR/bios/saturn/sega_101.bin
+EOF
+
+echo
+echo "Verifying Saturn integration..."
+echo "  System executable: OK"
+echo "  BareFront launcher: OK"
+echo "  Isolated profile: OK"
+echo
+echo "BareFront-owned controls:"
+echo "  Esc = return directly to BareFront"
+echo
+echo "Saturn integration stage complete."
+
+
+# ============================================================
 # Stage 4 - Production BareFront configuration
 # ============================================================
 
@@ -4387,8 +4552,8 @@ arguments={rom}
 [saturn]
 roms=roms/saturn
 screenshots=assets/games/saturn
-emulator=/usr/games/mednafen
-arguments=-force_module ss {rom}
+emulator=$MEDNAFEN_SATURN_LAUNCHER
+arguments={rom}
 
 [pcengine]
 roms=roms/pcengine
@@ -5146,17 +5311,23 @@ fi
 # ------------------------------------------------------------
 # Sega Saturn
 #
-# Mednafen's exact accepted BIOS variants will be validated in
-# Stage 5B. For now, presence of at least one Saturn firmware file
-# is enough to tell the user whether the folder is empty.
+# Mednafen uses separate BIOS files for Japan and for
+# North America/Europe. Stage 5B will validate accepted
+# legitimate variants by size, CRC32 and SHA-256.
 # ------------------------------------------------------------
 
 SATURN_DIR="$ROOT/bios/saturn"
+SATURN_JP="$SATURN_DIR/sega_101.bin"
+SATURN_NA_EU="$SATURN_DIR/mpr-17933.bin"
 
-if has_any_file "$SATURN_DIR"; then
-    pass "Saturn" "Firmware present - recognition pending"
+if [[ -f "$SATURN_JP" && -f "$SATURN_NA_EU" ]]; then
+    pass "Saturn" "Japan and North America/Europe BIOS files present"
+elif [[ -f "$SATURN_JP" ]]; then
+    warn "Saturn" "Japan BIOS present; add mpr-17933.bin for NA/Europe"
+elif [[ -f "$SATURN_NA_EU" ]]; then
+    warn "Saturn" "NA/Europe BIOS present; add sega_101.bin for Japan"
 else
-    fail "Saturn" "BIOS missing - add firmware to bios/saturn/"
+    fail "Saturn" "BIOS missing - add sega_101.bin and mpr-17933.bin"
 fi
 
 
@@ -5372,6 +5543,7 @@ echo "  BigPEmu pinned stable installation / verification"
 echo "  bsnes v115 stable-source build / verification"
 echo "  Amiberry official Debian-package installation / integration"
 echo "  PC Engine Mednafen launcher / isolated profile"
+echo "  Saturn Mednafen launcher / isolated profile"
 echo "  VICE BareFront launcher adapter"
 echo "  MAME Arcade / Neo Geo launcher adapter"
 echo "  Production barefront.ini generation / validation"

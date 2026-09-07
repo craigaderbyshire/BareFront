@@ -75,8 +75,8 @@ arguments={rom}
 [saturn]
 roms=roms/saturn
 screenshots=assets/games/saturn
-emulator=/usr/games/mednafen
-arguments=-force_module ss {rom}
+emulator=scripts/launch_mednafen_saturn.sh
+arguments={rom}
 
 [pcengine]
 roms=roms/pcengine
