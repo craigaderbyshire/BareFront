@@ -240,6 +240,117 @@ echo "Common dependency stage complete."
 
 
 # ============================================================
+# Stage 2A - Gamescope presentation layer
+# ============================================================
+
+heading "STAGE 2A / GAMESCOPE PRESENTATION"
+
+GAMESCOPE_EXE="/usr/games/gamescope"
+GAMESCOPE_LAUNCHER="$BAREFRONT_DIR/scripts/launch_barefront_gamescope.sh"
+GAMESCOPE_BACKPORTS_SOURCE="/etc/apt/sources.list.d/barefront-backports.sources"
+
+echo "Installing/verifying PipeWire support for Gamescope..."
+
+if package_is_installed "pipewire" && \
+   package_is_installed "pipewire-bin"
+then
+    echo "PipeWire packages are already installed."
+    echo "  Action: SKIP"
+else
+    # BareFront deliberately retains the desktop's existing audio
+    # server. pipewire-pulse and a separate session manager are not
+    # needed for Gamescope's capture connection.
+    if ! sudo apt-get install -y \
+        --no-install-recommends \
+        pipewire \
+        pipewire-bin
+    then
+        die "Could not install Gamescope's PipeWire support."
+    fi
+fi
+
+echo
+echo "Starting/verifying the PipeWire user service..."
+
+if ! systemctl --user enable --now \
+    pipewire.socket \
+    pipewire.service
+then
+    die "Could not enable the PipeWire user service."
+fi
+
+if ! systemctl --user is-active --quiet pipewire.service; then
+    die "PipeWire user service is not active."
+fi
+
+if ! pw-cli info 0 >/dev/null 2>&1; then
+    die "PipeWire connection verification failed."
+fi
+
+echo "  PipeWire connection: OK"
+
+echo
+echo "Installing/verifying Gamescope..."
+
+if package_is_installed "gamescope"; then
+    echo "Gamescope is already installed."
+    echo "  Action: SKIP"
+else
+    echo "Gamescope is supplied by Debian 13 backports."
+    echo "Creating BareFront-owned repository file:"
+    echo "  $GAMESCOPE_BACKPORTS_SOURCE"
+
+    sudo tee "$GAMESCOPE_BACKPORTS_SOURCE" >/dev/null <<'EOF'
+Types: deb
+URIs: https://deb.debian.org/debian
+Suites: trixie-backports
+Components: main contrib
+Enabled: yes
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF
+
+    echo
+    echo "Refreshing APT after enabling backports..."
+
+    if ! sudo apt-get update; then
+        die "APT update failed after enabling Debian backports."
+    fi
+
+    if ! sudo apt-get install -y \
+        -t trixie-backports \
+        gamescope
+    then
+        die "Could not install Gamescope from Debian backports."
+    fi
+fi
+
+if [[ ! -x "$GAMESCOPE_EXE" ]]; then
+    die "Gamescope executable not found: $GAMESCOPE_EXE"
+fi
+
+if [[ ! -f "$GAMESCOPE_LAUNCHER" ]]; then
+    die "Tracked Gamescope launcher missing: $GAMESCOPE_LAUNCHER"
+fi
+
+chmod +x "$GAMESCOPE_LAUNCHER"
+
+if [[ ! -x "$GAMESCOPE_LAUNCHER" ]]; then
+    die "BareFront Gamescope launcher is not executable."
+fi
+
+GAMESCOPE_PACKAGE_VERSION="$(
+    dpkg-query -W -f='${Version}' gamescope 2>/dev/null || true
+)"
+
+echo
+echo "Gamescope presentation dependencies verified."
+echo "  Executable: $GAMESCOPE_EXE"
+echo "  Package version: ${GAMESCOPE_PACKAGE_VERSION:-Unknown}"
+echo "  BareFront launcher: $GAMESCOPE_LAUNCHER"
+echo "  PipeWire service: active"
+echo
+
+# ============================================================
 # Stage 2B - Production BareFront directory structure
 # ============================================================
 
@@ -5570,6 +5681,7 @@ heading "INSTALLER v0.12 CHECKPOINT"
 echo "Completed:"
 echo "  Pre-flight checks"
 echo "  Common Debian dependencies"
+echo "  Gamescope presentation dependencies / PipeWire service"
 echo "  Production roms/bios/saves directory structure"
 echo "  Debian-managed emulator stage"
 echo "  MesenCE stable installation / verification"
