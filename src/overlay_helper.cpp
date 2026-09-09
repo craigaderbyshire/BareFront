@@ -816,6 +816,19 @@ int main(
         );
 
 
+    // BareFront owns presentation while gameplay is active.
+    // Hide the host X11 pointer so it cannot appear over the
+    // nested Gamescope/emulator window.
+    XFixesHideCursor(
+        display,
+        root
+    );
+
+    XFlush(
+        display
+    );
+
+
     XMapRaised(
         display,
         window
@@ -934,6 +947,18 @@ int main(
 
     XFree(
         visuals
+    );
+
+
+    // Restore the host pointer before returning control
+    // to BareFront.
+    XFixesShowCursor(
+        display,
+        root
+    );
+
+    XFlush(
+        display
     );
 
 

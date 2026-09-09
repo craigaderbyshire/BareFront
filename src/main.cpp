@@ -3296,6 +3296,17 @@ int main()
     }
 
 
+    // BareFront is a controller-first frontend.
+    // Keep the desktop mouse pointer out of the presentation.
+    if (SDL_ShowCursor(SDL_DISABLE) < 0)
+    {
+        std::cerr
+            << "Warning: unable to hide mouse cursor: "
+            << SDL_GetError()
+            << '\n';
+    }
+
+
     if (TTF_Init() != 0)
     {
         SDL_Quit();
