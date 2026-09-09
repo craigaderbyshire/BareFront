@@ -142,6 +142,18 @@ float4 BareFrontCrtCrisp(
             1.03
         );
 
+    //
+    // BareCRT soft black toe.
+    //
+    // Deepen the darkest tones very slightly while preserving
+    // mid-tone and highlight detail.
+    //
+    colour =
+        pow(
+            max(colour, 0.0),
+            float3(1.015, 1.015, 1.015)
+        );
+
     colour += BareFrontDummy * 0.0;
 
     return float4(
