@@ -227,6 +227,8 @@ GRAPHICS_PACKAGES=(
     libvulkan1
     mesa-vulkan-drivers
     vulkan-tools
+    vkbasalt
+    x11-xserver-utils
     libfuse2t64
     libx11-dev
     libxi-dev
@@ -4140,6 +4142,13 @@ MEDNAFEN_PCE_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mednafen_pce.sh"
 MEDNAFEN_PCE_PROFILE="$BAREFRONT_DIR/saves/pcengine/mednafen"
 MEDNAFEN_PCE_CONFIG="$MEDNAFEN_PCE_PROFILE/mednafen.cfg"
 
+MEDNAFEN_PCE_BARECRT_DIR="$BAREFRONT_DIR/assets/shaders/barecrt"
+MEDNAFEN_PCE_BARECRT_SHADER="$MEDNAFEN_PCE_BARECRT_DIR/BareCRT.fx"
+MEDNAFEN_PCE_RESHADE_INCLUDE="$MEDNAFEN_PCE_BARECRT_DIR/ReShade.fxh"
+MEDNAFEN_PCE_OVERLAY="$BAREFRONT_DIR/assets/overlays/pcengine.png"
+
+VKBASALT_LAYER="/usr/share/vulkan/implicit_layer.d/vkBasalt.json"
+
 echo "Configuring BareFront PC Engine integration..."
 echo
 
@@ -4157,13 +4166,34 @@ if [[ ! -x "$MEDNAFEN_PCE_LAUNCHER" ]]; then
     die "PC Engine launcher is not executable."
 fi
 
+if ! command -v xrandr >/dev/null 2>&1; then
+    die "PC Engine presentation requires xrandr."
+fi
+
+if [[ ! -f "$VKBASALT_LAYER" ]]; then
+    die "vkBasalt Vulkan layer is missing: $VKBASALT_LAYER"
+fi
+
+if [[ ! -s "$MEDNAFEN_PCE_BARECRT_SHADER" ]]; then
+    die "BareCRT shader is missing: $MEDNAFEN_PCE_BARECRT_SHADER"
+fi
+
+if [[ ! -s "$MEDNAFEN_PCE_RESHADE_INCLUDE" ]]; then
+    die "BareCRT ReShade include is missing: $MEDNAFEN_PCE_RESHADE_INCLUDE"
+fi
+
+if [[ ! -s "$MEDNAFEN_PCE_OVERLAY" ]]; then
+    die "PC Engine overlay artwork is missing: $MEDNAFEN_PCE_OVERLAY"
+fi
+
 mkdir -p \
     "$MEDNAFEN_PCE_LOCAL_DIR" \
     "$MEDNAFEN_PCE_PROFILE" \
     "$BAREFRONT_DIR/bios/pcengine" \
     "$BAREFRONT_DIR/roms/pcengine" \
     "$BAREFRONT_DIR/saves/pcengine" \
-    "$BAREFRONT_DIR/assets/games/pcengine"
+    "$BAREFRONT_DIR/assets/games/pcengine" \
+    "$BAREFRONT_DIR/assets/videos/pcengine"
 
 if [[ ! -f "$MEDNAFEN_PCE_CONFIG" ]]; then
     echo "Creating isolated Mednafen profile..."
@@ -4273,6 +4303,11 @@ echo "Verifying PC Engine integration..."
 echo "  System executable: OK"
 echo "  BareFront launcher: OK"
 echo "  Isolated profile: OK"
+echo "  Gamescope presentation: OK"
+echo "  vkBasalt Vulkan layer: OK"
+echo "  BareCRT shader: OK"
+echo "  PC Engine overlay: OK"
+echo "  Screenshot/video folders: OK"
 echo
 echo "BareFront-owned controls:"
 echo "  Esc = return directly to BareFront"

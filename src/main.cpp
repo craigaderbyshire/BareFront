@@ -14,6 +14,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdint>
+#include <cerrno>
 #include <mutex>
 #include <thread>
 
@@ -1839,9 +1840,9 @@ void launchGame(
     // The helper is deliberately optional: if it is missing,
     // games still launch normally.
     //
-    // Only start it when BareFront itself was launched through
-    // the Gamescope presentation path.  This prevents the test
-    // overlay appearing when BareFront is run directly on X11.
+    // BareFront owns per-game presentation regardless of how
+    // the menu itself was started.  If this system has tracked
+    // overlay artwork, start the presentation helper for gameplay.
     // --------------------------------------------------
 
     pid_t overlayHelperPid =
@@ -1850,6 +1851,11 @@ void launchGame(
 
     const fs::path overlayHelper =
         "./overlay_helper";
+
+
+    const fs::path overlayArtwork =
+        fs::path("assets/overlays") /
+        (system.configSection + ".png");
 
 
     const char* gamescopeEnvironment =
@@ -1863,7 +1869,10 @@ void launchGame(
         std::string(gamescopeEnvironment) == "1";
 
 
-    if (gamescopeActive)
+    if (
+        gamescopeActive &&
+        fs::exists(overlayArtwork)
+    )
     {
         if (fs::exists(overlayHelper))
         {
@@ -1873,9 +1882,19 @@ void launchGame(
 
             if (overlayHelperPid == 0)
             {
+                // Keep the presentation overlay out of the
+                // emulator/Gamescope process group.  Gamescope
+                // lifecycle signalling must never terminate the
+                // BareFront-owned overlay helper.
+                if (setpgid(0, 0) != 0)
+                {
+                    _exit(126);
+                }
+
                 execl(
                     overlayHelper.c_str(),
                     overlayHelper.c_str(),
+                    overlayArtwork.c_str(),
                     static_cast<char*>(nullptr)
                 );
 
@@ -1933,9 +1952,211 @@ void launchGame(
         << "\n";
 
 
-    std::system(
-        command.c_str()
-    );
+    // --------------------------------------------------
+    // Launch gameplay as a managed child process group.
+    //
+    // Do not use std::system() here. BareFront must remain
+    // able to react to SDL_QUIT / SIGTERM while a game is
+    // running, and it must own the complete gameplay tree.
+    // --------------------------------------------------
+
+    bool quitRequested =
+        false;
+
+
+    pid_t gameProcessPid =
+        fork();
+
+
+    if (gameProcessPid == 0)
+    {
+        // Wrapper + Gamescope + emulator all belong to one
+        // gameplay process group owned by BareFront.
+        if (setpgid(0, 0) != 0)
+        {
+            _exit(126);
+        }
+
+
+        execl(
+            "/bin/sh",
+            "sh",
+            "-c",
+            command.c_str(),
+            static_cast<char*>(nullptr)
+        );
+
+
+        _exit(127);
+    }
+
+
+    if (gameProcessPid < 0)
+    {
+        std::cerr
+            << "Unable to start gameplay process\n";
+    }
+    else
+    {
+        // Close the small fork/setpgid race from the parent
+        // side as well. Failure here is harmless if the child
+        // already established its own group.
+        setpgid(
+            gameProcessPid,
+            gameProcessPid
+        );
+
+
+        int gameStatus =
+            0;
+
+        bool gameExited =
+            false;
+
+
+        while (!gameExited)
+        {
+            pid_t result =
+                waitpid(
+                    gameProcessPid,
+                    &gameStatus,
+                    WNOHANG
+                );
+
+
+            if (result == gameProcessPid)
+            {
+                gameExited =
+                    true;
+
+                break;
+            }
+
+
+            if (result < 0)
+            {
+                if (errno == EINTR)
+                {
+                    continue;
+                }
+
+                gameExited =
+                    true;
+
+                break;
+            }
+
+
+            // SDL converts desktop close / SIGTERM into an
+            // SDL_QUIT event. Pump only that event here while
+            // BareFront is supervising gameplay.
+            SDL_PumpEvents();
+
+
+            SDL_Event quitEvent {};
+
+
+            int quitEventCount =
+                SDL_PeepEvents(
+                    &quitEvent,
+                    1,
+                    SDL_GETEVENT,
+                    SDL_QUIT,
+                    SDL_QUIT
+                );
+
+
+            if (quitEventCount > 0)
+            {
+                quitRequested =
+                    true;
+
+
+                // Ask the entire gameplay tree to exit cleanly.
+                kill(
+                    -gameProcessPid,
+                    SIGTERM
+                );
+
+
+                // Give wrappers time to run EXIT traps such as
+                // restoring the host display refresh rate.
+                for (int attempt = 0;
+                     attempt < 20;
+                     ++attempt)
+                {
+                    result =
+                        waitpid(
+                            gameProcessPid,
+                            &gameStatus,
+                            WNOHANG
+                        );
+
+
+                    if (result == gameProcessPid)
+                    {
+                        gameExited =
+                            true;
+
+                        break;
+                    }
+
+
+                    if (result < 0)
+                    {
+                        if (errno == EINTR)
+                        {
+                            continue;
+                        }
+
+                        gameExited =
+                            true;
+
+                        break;
+                    }
+
+
+                    usleep(
+                        100000
+                    );
+                }
+
+
+                // A stuck emulator must never survive BareFront.
+                if (!gameExited)
+                {
+                    kill(
+                        -gameProcessPid,
+                        SIGKILL
+                    );
+
+
+                    while (
+                        waitpid(
+                            gameProcessPid,
+                            &gameStatus,
+                            0
+                        ) < 0 &&
+                        errno == EINTR
+                    )
+                    {
+                    }
+
+
+                    gameExited =
+                        true;
+                }
+
+
+                break;
+            }
+
+
+            usleep(
+                100000
+            );
+        }
+    }
 
 
     // Emulator has closed: remove the presentation overlay
@@ -1967,6 +2188,19 @@ void launchGame(
             captureHelperPid,
             nullptr,
             0
+        );
+    }
+
+
+    if (quitRequested)
+    {
+        SDL_Event quitEvent {};
+
+        quitEvent.type =
+            SDL_QUIT;
+
+        SDL_PushEvent(
+            &quitEvent
         );
     }
 }
@@ -3001,6 +3235,21 @@ enum class Screen
 
 int main()
 {
+    // --------------------------------------------------
+    // Per-game presentation environment
+    //
+    // BareFront owns Gamescope presentation regardless of
+    // how the menu itself was started: launcher script,
+    // terminal, Thunar, autostart, etc.
+    // --------------------------------------------------
+
+    setenv(
+        "BAREFRONT_GAMESCOPE_CAPTURE",
+        "1",
+        1
+    );
+
+
     // --------------------------------------------------
     // BareFront base resolution
     // --------------------------------------------------

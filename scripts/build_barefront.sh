@@ -16,7 +16,7 @@ echo "Built: $ROOT_DIR/barefront"
 echo
 echo "Building BareFront presentation overlay helper..."
 
-for package in x11 xfixes xrender; do
+for package in x11 xfixes xrender SDL2_image; do
     if ! pkg-config --exists "$package"; then
         echo "Missing overlay build dependency: $package" >&2
         exit 1
@@ -31,7 +31,7 @@ g++ \
     -Werror \
     src/overlay_helper.cpp \
     -o overlay_helper \
-    $(pkg-config --cflags --libs x11 xfixes xrender)
+    $(pkg-config --cflags --libs x11 xfixes xrender SDL2_image)
 
 echo
 echo "Built: $ROOT_DIR/overlay_helper"

@@ -5,77 +5,309 @@
 #include <X11/extensions/shape.h>
 #include <X11/extensions/Xrender.h>
 
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_image.h>
+
 #include <csignal>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <unistd.h>
 
+
 static volatile sig_atomic_t running = 1;
+
 
 static void handleSignal(int)
 {
     running = 0;
 }
 
-static void fillRect(
+
+static void compositeArtwork(
     Display* display,
-    Picture picture,
-    const XRenderColor& colour,
-    int x,
-    int y,
-    unsigned int width,
-    unsigned int height)
+    Picture source,
+    Picture destination,
+    int width,
+    int height)
 {
-    XRenderFillRectangle(
+    XRenderComposite(
         display,
         PictOpSrc,
-        picture,
-        &colour,
-        x,
-        y,
+        source,
+        None,
+        destination,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
         width,
         height
     );
 }
 
-int main()
+
+int main(
+    int argc,
+    char* argv[])
 {
-    // Gamescope external overlays are NoScale.
-    // Therefore this canvas matches the PRESENTATION OUTPUT,
-    // not the 1280x720 Xwayland root.
-    constexpr int WIDTH  = 1920;
+    constexpr int WIDTH = 1920;
     constexpr int HEIGHT = 1080;
 
-    // Deliberately obvious centred 4:3 test opening.
-    constexpr int OPEN_W = 1344;
-    constexpr int OPEN_H = 1008;
 
-    constexpr int OPEN_X = (WIDTH  - OPEN_W) / 2;
-    constexpr int OPEN_Y = (HEIGHT - OPEN_H) / 2;
-
-    constexpr int BORDER = 12;
-
-    std::signal(SIGINT, handleSignal);
-    std::signal(SIGTERM, handleSignal);
-
-    Display* display = XOpenDisplay(nullptr);
-
-    if (!display)
+    if (argc != 2)
     {
-        std::cerr << "Unable to open X11 display.\n";
+        std::cerr
+            << "Usage: overlay_helper <overlay.png>\n";
+
         return 1;
     }
 
-    const int screen = DefaultScreen(display);
-    Window root = RootWindow(display, screen);
+
+    const char* artworkPath =
+        argv[1];
+
+
+    std::signal(
+        SIGINT,
+        handleSignal
+    );
+
+    std::signal(
+        SIGTERM,
+        handleSignal
+    );
+
+
+    if (SDL_Init(0) != 0)
+    {
+        std::cerr
+            << "SDL_Init failed: "
+            << SDL_GetError()
+            << "\n";
+
+        return 1;
+    }
+
+
+    if ((IMG_Init(IMG_INIT_PNG) & IMG_INIT_PNG) == 0)
+    {
+        std::cerr
+            << "SDL_image PNG support failed: "
+            << IMG_GetError()
+            << "\n";
+
+        SDL_Quit();
+        return 1;
+    }
+
+
+    SDL_Surface* loaded =
+        IMG_Load(
+            artworkPath
+        );
+
+
+    if (!loaded)
+    {
+        std::cerr
+            << "Unable to load overlay artwork: "
+            << artworkPath
+            << ": "
+            << IMG_GetError()
+            << "\n";
+
+        IMG_Quit();
+        SDL_Quit();
+
+        return 1;
+    }
+
+
+    if (
+        loaded->w != WIDTH ||
+        loaded->h != HEIGHT
+    )
+    {
+        std::cerr
+            << "Overlay artwork must be "
+            << WIDTH
+            << "x"
+            << HEIGHT
+            << ", got "
+            << loaded->w
+            << "x"
+            << loaded->h
+            << "\n";
+
+        SDL_FreeSurface(
+            loaded
+        );
+
+        IMG_Quit();
+        SDL_Quit();
+
+        return 1;
+    }
+
+
+    SDL_Surface* artwork =
+        SDL_ConvertSurfaceFormat(
+            loaded,
+            SDL_PIXELFORMAT_ARGB8888,
+            0
+        );
+
+
+    SDL_FreeSurface(
+        loaded
+    );
+
+
+    if (!artwork)
+    {
+        std::cerr
+            << "Unable to convert overlay artwork: "
+            << SDL_GetError()
+            << "\n";
+
+        IMG_Quit();
+        SDL_Quit();
+
+        return 1;
+    }
+
 
     //
-    // Find a genuine 32-bit ARGB visual.
+    // XRender expects premultiplied ARGB.
+    //
+    if (SDL_MUSTLOCK(artwork))
+    {
+        if (SDL_LockSurface(artwork) != 0)
+        {
+            std::cerr
+                << "Unable to lock overlay artwork: "
+                << SDL_GetError()
+                << "\n";
+
+            SDL_FreeSurface(
+                artwork
+            );
+
+            IMG_Quit();
+            SDL_Quit();
+
+            return 1;
+        }
+    }
+
+
+    for (int y = 0; y < HEIGHT; ++y)
+    {
+        auto* row =
+            reinterpret_cast<std::uint32_t*>(
+                static_cast<unsigned char*>(artwork->pixels) +
+                (y * artwork->pitch)
+            );
+
+
+        for (int x = 0; x < WIDTH; ++x)
+        {
+            const std::uint32_t pixel =
+                row[x];
+
+
+            const std::uint32_t alpha =
+                (pixel >> 24) & 0xff;
+
+
+            std::uint32_t red =
+                (pixel >> 16) & 0xff;
+
+            std::uint32_t green =
+                (pixel >> 8) & 0xff;
+
+            std::uint32_t blue =
+                pixel & 0xff;
+
+
+            red =
+                (red * alpha + 127) / 255;
+
+            green =
+                (green * alpha + 127) / 255;
+
+            blue =
+                (blue * alpha + 127) / 255;
+
+
+            row[x] =
+                (alpha << 24) |
+                (red << 16) |
+                (green << 8) |
+                blue;
+        }
+    }
+
+
+    if (SDL_MUSTLOCK(artwork))
+    {
+        SDL_UnlockSurface(
+            artwork
+        );
+    }
+
+
+    Display* display =
+        XOpenDisplay(
+            nullptr
+        );
+
+
+    if (!display)
+    {
+        std::cerr
+            << "Unable to open X11 display.\n";
+
+        SDL_FreeSurface(
+            artwork
+        );
+
+        IMG_Quit();
+        SDL_Quit();
+
+        return 1;
+    }
+
+
+    const int screen =
+        DefaultScreen(
+            display
+        );
+
+
+    Window root =
+        RootWindow(
+            display,
+            screen
+        );
+
+
+    //
+    // Find the same 32-bit ARGB visual already proven with
+    // Gamescope's GAMESCOPE_EXTERNAL_OVERLAY path.
     //
     XVisualInfo visualTemplate {};
-    visualTemplate.screen = screen;
+    visualTemplate.screen =
+        screen;
 
-    int visualCount = 0;
+
+    int visualCount =
+        0;
+
 
     XVisualInfo* visuals =
         XGetVisualInfo(
@@ -85,20 +317,41 @@ int main()
             &visualCount
         );
 
+
     if (!visuals)
     {
-        std::cerr << "Unable to enumerate X11 visuals.\n";
-        XCloseDisplay(display);
+        std::cerr
+            << "Unable to enumerate X11 visuals.\n";
+
+        XCloseDisplay(
+            display
+        );
+
+        SDL_FreeSurface(
+            artwork
+        );
+
+        IMG_Quit();
+        SDL_Quit();
+
         return 1;
     }
 
-    XVisualInfo* chosenVisual = nullptr;
-    XRenderPictFormat* chosenFormat = nullptr;
+
+    XVisualInfo* chosenVisual =
+        nullptr;
+
+    XRenderPictFormat* chosenFormat =
+        nullptr;
+
 
     for (int i = 0; i < visualCount; ++i)
     {
         if (visuals[i].depth != 32)
+        {
             continue;
+        }
+
 
         XRenderPictFormat* format =
             XRenderFindVisualFormat(
@@ -106,27 +359,98 @@ int main()
                 visuals[i].visual
             );
 
+
         if (!format)
+        {
             continue;
+        }
+
 
         if (format->type != PictTypeDirect)
+        {
             continue;
+        }
+
 
         if (format->direct.alphaMask == 0)
+        {
             continue;
+        }
 
-        chosenVisual = &visuals[i];
-        chosenFormat = format;
+
+        chosenVisual =
+            &visuals[i];
+
+        chosenFormat =
+            format;
+
         break;
     }
 
-    if (!chosenVisual || !chosenFormat)
+
+    if (
+        !chosenVisual ||
+        !chosenFormat
+    )
     {
-        std::cerr << "No 32-bit ARGB X11 visual found.\n";
-        XFree(visuals);
-        XCloseDisplay(display);
+        std::cerr
+            << "No 32-bit ARGB X11 visual found.\n";
+
+        XFree(
+            visuals
+        );
+
+        XCloseDisplay(
+            display
+        );
+
+        SDL_FreeSurface(
+            artwork
+        );
+
+        IMG_Quit();
+        SDL_Quit();
+
         return 1;
     }
+
+
+    //
+    // The Gamescope Xwayland ARGB visual used by our proven
+    // prototype has this standard AARRGGBB layout.
+    //
+    if (
+        chosenFormat->direct.red != 16 ||
+        chosenFormat->direct.green != 8 ||
+        chosenFormat->direct.blue != 0 ||
+        chosenFormat->direct.alpha != 24 ||
+        chosenFormat->direct.redMask != 0xff ||
+        chosenFormat->direct.greenMask != 0xff ||
+        chosenFormat->direct.blueMask != 0xff ||
+        chosenFormat->direct.alphaMask != 0xff
+    )
+    {
+        std::cerr
+            << "Unsupported X11 ARGB visual layout.\n";
+
+        XFree(
+            visuals
+        );
+
+        XCloseDisplay(
+            display
+        );
+
+        SDL_FreeSurface(
+            artwork
+        );
+
+        IMG_Quit();
+        SDL_Quit();
+
+        return 1;
+    }
+
 
     Colormap colormap =
         XCreateColormap(
@@ -136,14 +460,24 @@ int main()
             AllocNone
         );
 
+
     XSetWindowAttributes attributes {};
-    attributes.colormap = colormap;
-    attributes.border_pixel = 0;
-    attributes.background_pixel = 0;
-    attributes.override_redirect = True;
+    attributes.colormap =
+        colormap;
+
+    attributes.border_pixel =
+        0;
+
+    attributes.background_pixel =
+        0;
+
+    attributes.override_redirect =
+        True;
+
     attributes.event_mask =
         ExposureMask |
         StructureNotifyMask;
+
 
     Window window =
         XCreateWindow(
@@ -165,26 +499,43 @@ int main()
             &attributes
         );
 
+
     if (!window)
     {
-        std::cerr << "Unable to create overlay window.\n";
+        std::cerr
+            << "Unable to create overlay window.\n";
 
-        XFreeColormap(display, colormap);
-        XFree(visuals);
-        XCloseDisplay(display);
+        XFreeColormap(
+            display,
+            colormap
+        );
+
+        XFree(
+            visuals
+        );
+
+        XCloseDisplay(
+            display
+        );
+
+        SDL_FreeSurface(
+            artwork
+        );
+
+        IMG_Quit();
+        SDL_Quit();
 
         return 1;
     }
 
+
     XStoreName(
         display,
         window,
-        "BareFront Overlay Test V2"
+        "BareFront Presentation Overlay"
     );
 
-    //
-    // Gamescope external-overlay tag.
-    //
+
     Atom externalOverlay =
         XInternAtom(
             display,
@@ -192,7 +543,10 @@ int main()
             False
         );
 
-    unsigned long enabled = 1;
+
+    unsigned long enabled =
+        1;
+
 
     XChangeProperty(
         display,
@@ -201,14 +555,13 @@ int main()
         XA_CARDINAL,
         32,
         PropModeReplace,
-        reinterpret_cast<unsigned char*>(&enabled),
+        reinterpret_cast<unsigned char*>(
+            &enabled
+        ),
         1
     );
 
-    //
-    // Keep the overall window fully enabled in Gamescope.
-    // Per-pixel alpha provides the transparent opening.
-    //
+
     Atom opacityAtom =
         XInternAtom(
             display,
@@ -216,7 +569,10 @@ int main()
             False
         );
 
-    unsigned long fullOpacity = 0xffffffffUL;
+
+    unsigned long fullOpacity =
+        0xffffffffUL;
+
 
     XChangeProperty(
         display,
@@ -225,12 +581,15 @@ int main()
         XA_CARDINAL,
         32,
         PropModeReplace,
-        reinterpret_cast<unsigned char*>(&fullOpacity),
+        reinterpret_cast<unsigned char*>(
+            &fullOpacity
+        ),
         1
     );
 
+
     //
-    // Never accept mouse input.
+    // Overlay must never receive mouse input.
     //
     XserverRegion emptyInput =
         XFixesCreateRegion(
@@ -238,6 +597,7 @@ int main()
             nullptr,
             0
         );
+
 
     XFixesSetWindowShapeRegion(
         display,
@@ -248,15 +608,205 @@ int main()
         emptyInput
     );
 
+
     XFixesDestroyRegion(
         display,
         emptyInput
     );
 
-    XMapRaised(display, window);
-    XSync(display, False);
 
-    Picture picture =
+    Pixmap artworkPixmap =
+        XCreatePixmap(
+            display,
+            root,
+            WIDTH,
+            HEIGHT,
+            chosenVisual->depth
+        );
+
+
+    GC graphicsContext =
+        XCreateGC(
+            display,
+            artworkPixmap,
+            0,
+            nullptr
+        );
+
+
+    const std::size_t imageBytes =
+        static_cast<std::size_t>(
+            artwork->pitch
+        ) *
+        HEIGHT;
+
+
+    char* imageData =
+        static_cast<char*>(
+            std::malloc(
+                imageBytes
+            )
+        );
+
+
+    if (!imageData)
+    {
+        std::cerr
+            << "Unable to allocate X11 overlay image.\n";
+
+        XFreeGC(
+            display,
+            graphicsContext
+        );
+
+        XFreePixmap(
+            display,
+            artworkPixmap
+        );
+
+        XDestroyWindow(
+            display,
+            window
+        );
+
+        XFreeColormap(
+            display,
+            colormap
+        );
+
+        XFree(
+            visuals
+        );
+
+        XCloseDisplay(
+            display
+        );
+
+        SDL_FreeSurface(
+            artwork
+        );
+
+        IMG_Quit();
+        SDL_Quit();
+
+        return 1;
+    }
+
+
+    std::memcpy(
+        imageData,
+        artwork->pixels,
+        imageBytes
+    );
+
+
+    XImage* image =
+        XCreateImage(
+            display,
+            chosenVisual->visual,
+            chosenVisual->depth,
+            ZPixmap,
+            0,
+            imageData,
+            WIDTH,
+            HEIGHT,
+            32,
+            artwork->pitch
+        );
+
+
+    if (!image)
+    {
+        std::cerr
+            << "Unable to create X11 overlay image.\n";
+
+        std::free(
+            imageData
+        );
+
+        XFreeGC(
+            display,
+            graphicsContext
+        );
+
+        XFreePixmap(
+            display,
+            artworkPixmap
+        );
+
+        XDestroyWindow(
+            display,
+            window
+        );
+
+        XFreeColormap(
+            display,
+            colormap
+        );
+
+        XFree(
+            visuals
+        );
+
+        XCloseDisplay(
+            display
+        );
+
+        SDL_FreeSurface(
+            artwork
+        );
+
+        IMG_Quit();
+        SDL_Quit();
+
+        return 1;
+    }
+
+
+    XPutImage(
+        display,
+        artworkPixmap,
+        graphicsContext,
+        image,
+        0,
+        0,
+        0,
+        0,
+        WIDTH,
+        HEIGHT
+    );
+
+
+    //
+    // XDestroyImage also frees imageData.
+    //
+    XDestroyImage(
+        image
+    );
+
+
+    XFreeGC(
+        display,
+        graphicsContext
+    );
+
+
+    SDL_FreeSurface(
+        artwork
+    );
+
+
+    Picture artworkPicture =
+        XRenderCreatePicture(
+            display,
+            artworkPixmap,
+            chosenFormat,
+            0,
+            nullptr
+        );
+
+
+    Picture windowPicture =
         XRenderCreatePicture(
             display,
             window,
@@ -265,208 +815,135 @@ int main()
             nullptr
         );
 
-    //
-    // Completely transparent background.
-    //
-    const XRenderColor transparent =
-    {
-        0x0000,
-        0x0000,
-        0x0000,
-        0x0000
-    };
 
-    fillRect(
+    XMapRaised(
         display,
-        picture,
-        transparent,
-        0,
-        0,
+        window
+    );
+
+
+    compositeArtwork(
+        display,
+        artworkPicture,
+        windowPicture,
         WIDTH,
         HEIGHT
     );
 
-    //
-    // Dark opaque surround.
-    //
-    const XRenderColor dark =
-    {
-        0x0800,
-        0x0800,
-        0x0800,
-        0xffff
-    };
 
-    // Top
-    fillRect(
+    XSync(
         display,
-        picture,
-        dark,
-        0,
-        0,
-        WIDTH,
-        OPEN_Y
+        False
     );
 
-    // Bottom
-    fillRect(
-        display,
-        picture,
-        dark,
-        0,
-        OPEN_Y + OPEN_H,
-        WIDTH,
-        HEIGHT - (OPEN_Y + OPEN_H)
-    );
-
-    // Left
-    fillRect(
-        display,
-        picture,
-        dark,
-        0,
-        OPEN_Y,
-        OPEN_X,
-        OPEN_H
-    );
-
-    // Right
-    fillRect(
-        display,
-        picture,
-        dark,
-        OPEN_X + OPEN_W,
-        OPEN_Y,
-        WIDTH - (OPEN_X + OPEN_W),
-        OPEN_H
-    );
-
-    //
-    // Bright magenta proof border.
-    //
-    const XRenderColor magenta =
-    {
-        0xffff,
-        0x0000,
-        0xffff,
-        0xffff
-    };
-
-    // Top
-    fillRect(
-        display,
-        picture,
-        magenta,
-        OPEN_X - BORDER,
-        OPEN_Y - BORDER,
-        OPEN_W + (BORDER * 2),
-        BORDER
-    );
-
-    // Bottom
-    fillRect(
-        display,
-        picture,
-        magenta,
-        OPEN_X - BORDER,
-        OPEN_Y + OPEN_H,
-        OPEN_W + (BORDER * 2),
-        BORDER
-    );
-
-    // Left
-    fillRect(
-        display,
-        picture,
-        magenta,
-        OPEN_X - BORDER,
-        OPEN_Y,
-        BORDER,
-        OPEN_H
-    );
-
-    // Right
-    fillRect(
-        display,
-        picture,
-        magenta,
-        OPEN_X + OPEN_W,
-        OPEN_Y,
-        BORDER,
-        OPEN_H
-    );
-
-    XSync(display, False);
 
     XWindowAttributes actual {};
+
+
     XGetWindowAttributes(
         display,
         window,
         &actual
     );
 
+
     std::cout
-        << "BareFront overlay V2 running\n"
+        << "BareFront presentation overlay running\n"
         << "Display: "
         << DisplayString(display)
         << "\n"
-        << "Visual depth: "
-        << chosenVisual->depth
+        << "Artwork: "
+        << artworkPath
         << "\n"
-        << "Window requested: "
-        << WIDTH
-        << "x"
-        << HEIGHT
-        << "\n"
-        << "Window actual: "
+        << "Window: "
         << actual.width
         << "x"
         << actual.height
-        << "\n"
-        << "Opening: "
-        << OPEN_W
-        << "x"
-        << OPEN_H
-        << " at "
-        << OPEN_X
-        << ","
-        << OPEN_Y
         << "\n";
 
+
     std::cout.flush();
+
 
     while (running)
     {
         while (XPending(display))
         {
             XEvent event {};
+
+
             XNextEvent(
                 display,
                 &event
             );
+
+
+            if (event.type == Expose)
+            {
+                compositeArtwork(
+                    display,
+                    artworkPicture,
+                    windowPicture,
+                    WIDTH,
+                    HEIGHT
+                );
+            }
         }
 
-        usleep(100000);
+
+        XFlush(
+            display
+        );
+
+
+        usleep(
+            100000
+        );
     }
+
 
     XRenderFreePicture(
         display,
-        picture
+        windowPicture
     );
+
+
+    XRenderFreePicture(
+        display,
+        artworkPicture
+    );
+
+
+    XFreePixmap(
+        display,
+        artworkPixmap
+    );
+
 
     XDestroyWindow(
         display,
         window
     );
 
+
     XFreeColormap(
         display,
         colormap
     );
 
-    XFree(visuals);
 
-    XCloseDisplay(display);
+    XFree(
+        visuals
+    );
+
+
+    XCloseDisplay(
+        display
+    );
+
+
+    IMG_Quit();
+    SDL_Quit();
 
     return 0;
 }
