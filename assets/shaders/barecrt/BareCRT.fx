@@ -48,7 +48,7 @@ float4 BareFrontCrtCrisp(
             (glow - 0.60) / 0.40
         );
 
-    glow *= 0.10;
+    glow *= 0.14;
 
     //
     // PC Engine is exactly 4x vertically:
@@ -64,23 +64,18 @@ float4 BareFrontCrtCrisp(
     float row =
         y - 4.0 * floor(y / 4.0);
 
-    float peak =
-        max(colour.r, max(colour.g, colour.b));
-
     //
-    // Bright CRT beams spread slightly more than dark ones.
+    // BareCRT motion-safe beam profile.
     //
-    //
-    // BareCRT beam model.
-    //
-    // Dark pixels produce a narrow beam with a pronounced gap.
-    // Bright pixels produce a wider, fuller beam, as on a real CRT.
+    // Keep the modulation deliberately shallow and independent
+    // of pixel brightness. Strong brightness-dependent beams
+    // caused visible shimmer during vertical scrolling.
     //
     float edgeGain =
-        0.46 + (0.42 * peak);
+        0.92;
 
     float beamGain =
-        1.08 + (0.08 * peak);
+        1.04;
 
     if (row < 1.0 || row >= 3.0)
         colour *= edgeGain;
@@ -88,20 +83,25 @@ float4 BareFrontCrtCrisp(
         colour *= beamGain;
 
     //
-    // Native-output aperture grille.
-    // One RGB phosphor triad every 3 physical output pixels.
+    // Motion-safe phosphor structure.
+    //
+    // PC Engine is scaled exactly 4x, so repeat the mask once
+    // per scaled source pixel. This prevents the RGB phase from
+    // walking across source pixels during horizontal scrolling.
     //
     float maskPhase =
-        x - 3.0 * floor(x / 3.0);
+        x - 4.0 * floor(x / 4.0);
 
     float3 mask;
 
     if (maskPhase < 1.0)
-        mask = float3(1.00, 0.82, 0.82);
+        mask = float3(1.00, 0.86, 0.86);
     else if (maskPhase < 2.0)
-        mask = float3(0.82, 1.00, 0.82);
+        mask = float3(0.86, 1.00, 0.86);
+    else if (maskPhase < 3.0)
+        mask = float3(0.86, 0.86, 1.00);
     else
-        mask = float3(0.82, 0.82, 1.00);
+        mask = float3(0.91, 0.91, 0.91);
 
     colour *= mask;
 
