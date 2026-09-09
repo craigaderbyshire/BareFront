@@ -126,6 +126,22 @@ float4 BareFrontCrtCrisp(
     colour *=
         0.96 + (0.06 * colour);
 
+    //
+    // BareCRT subtle chroma response.
+    //
+    // CRT phosphors give saturated colours a little more separation.
+    // Keep this deliberately restrained and entirely per-pixel.
+    //
+    float luminance =
+        dot(colour, float3(0.299, 0.587, 0.114));
+
+    colour =
+        lerp(
+            float3(luminance, luminance, luminance),
+            colour,
+            1.03
+        );
+
     colour += BareFrontDummy * 0.0;
 
     return float4(
