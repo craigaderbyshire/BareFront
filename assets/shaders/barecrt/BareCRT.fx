@@ -116,6 +116,16 @@ float4 BareFrontCrtCrisp(
     //
     colour += glow;
 
+    //
+    // BareCRT analogue light response.
+    //
+    // Give dark and mid tones a slightly deeper CRT-like response
+    // while allowing bright colours to retain a little more punch.
+    // This is entirely per-pixel, so it cannot introduce motion shimmer.
+    //
+    colour *=
+        0.96 + (0.06 * colour);
+
     colour += BareFrontDummy * 0.0;
 
     return float4(
