@@ -3343,6 +3343,7 @@ heading "STAGE 3B / BSNES"
 
 BSNES_DIR="$BAREFRONT_DIR/emulators/bsnes"
 BSNES_EXE="$BSNES_DIR/bsnes"
+BSNES_LAUNCHER="$BAREFRONT_DIR/scripts/launch_bsnes.sh"
 
 # v115 is the final official stable bsnes release from Near/byuu.
 # Official stable Linux binaries are not provided in a form we
@@ -3493,6 +3494,102 @@ else
 
 
     # --------------------------------------------------------
+    # BareFront pseudo-fullscreen startup patch
+    #
+    # bsnes v115's normal --fullscreen path creates a separate
+    # override-redirect X11 video surface. Inside Gamescope that
+    # competes with the managed Hiro presentation window.
+    #
+    # BareFront adds --pseudo-fullscreen, using bsnes' existing
+    # managed-window pseudo-fullscreen path instead.
+    # --------------------------------------------------------
+
+    BSNES_MAIN_CPP="$BSNES_SOURCE_DIR/bsnes/target-bsnes/bsnes.cpp"
+    BSNES_PROGRAM_HPP="$BSNES_SOURCE_DIR/bsnes/target-bsnes/program/program.hpp"
+    BSNES_PROGRAM_CPP="$BSNES_SOURCE_DIR/bsnes/target-bsnes/program/program.cpp"
+
+    for required_file in \
+        "$BSNES_MAIN_CPP" \
+        "$BSNES_PROGRAM_HPP" \
+        "$BSNES_PROGRAM_CPP"
+    do
+        if [[ ! -f "$required_file" ]]; then
+            rm -rf "$TEMP_DIR"
+            die "Expected bsnes source file is missing: $required_file"
+        fi
+    done
+
+    echo
+    echo "Applying BareFront bsnes pseudo-fullscreen patch..."
+
+    python3 - \
+        "$BSNES_MAIN_CPP" \
+        "$BSNES_PROGRAM_HPP" \
+        "$BSNES_PROGRAM_CPP" \
+        <<'PYBSNESPSEUDO'
+from pathlib import Path
+import sys
+
+main_cpp = Path(sys.argv[1])
+program_hpp = Path(sys.argv[2])
+program_cpp = Path(sys.argv[3])
+
+def replace_once(path, old, new):
+    text = path.read_text()
+
+    if new in text:
+        return
+
+    if old not in text:
+        raise SystemExit(
+            f"Expected bsnes v115 source text was not found in {path}"
+        )
+
+    path.write_text(text.replace(old, new, 1))
+
+replace_once(
+    main_cpp,
+    '''    if(argument == "--fullscreen") {
+      program.startFullScreen = true;
+''',
+    '''    if(argument == "--fullscreen") {
+      program.startFullScreen = true;
+    } else if(argument == "--pseudo-fullscreen") {
+      program.startPseudoFullScreen = true;
+'''
+)
+
+replace_once(
+    program_hpp,
+    '''  bool startFullScreen = false;
+''',
+    '''  bool startFullScreen = false;
+  bool startPseudoFullScreen = false;
+'''
+)
+
+replace_once(
+    program_cpp,
+    '''  if(startFullScreen && emulator->loaded()) {
+    toggleVideoFullScreen();
+  }
+  Application::onMain({&Program::main, this});
+''',
+    '''  if(startFullScreen && emulator->loaded()) {
+    toggleVideoFullScreen();
+  }
+  if(startPseudoFullScreen && emulator->loaded()) {
+    toggleVideoPseudoFullScreen();
+  }
+  Application::onMain({&Program::main, this});
+'''
+)
+
+print("BareFront pseudo-fullscreen patch applied.")
+PYBSNESPSEUDO
+
+
+    # --------------------------------------------------------
     # Compile
     #
     # make tells GNU Make to follow the project's build rules.
@@ -3603,13 +3700,16 @@ fi
 # ------------------------------------------------------------
 # BareFront bsnes baseline
 #
-# bsnes expands this minimal BML profile itself on first launch.
-# BareFront supplies only the settings required for integration:
-#   - SRAM saves under BareFront
-#   - save states under BareFront
-#   - Esc quits bsnes completely
+# BareFront owns the settings required to provide a clean,
+# predictable SNES presentation:
+#   - raw, unfiltered 256x224 emulator output
+#   - neutral colour/gamma handling
+#   - stable ALSA audio
+#   - no bsnes status bar
+#   - Esc exits directly to BareFront
+#   - saves/states remain under BareFront
 #
-# Renderer, audio and other emulator settings remain bsnes-owned.
+# Unrelated bsnes settings are preserved.
 # ------------------------------------------------------------
 
 BSNES_CONFIG_DIR="$HOME/.config/bsnes"
@@ -3617,84 +3717,115 @@ BSNES_CONFIG="$BSNES_CONFIG_DIR/settings.bml"
 BSNES_SAVE_DIR="$BAREFRONT_DIR/saves/snes"
 BSNES_STATE_DIR="$BSNES_SAVE_DIR/states"
 
-mkdir -p "$BSNES_SAVE_DIR" "$BSNES_STATE_DIR"
+mkdir -p \
+    "$BSNES_CONFIG_DIR" \
+    "$BSNES_SAVE_DIR" \
+    "$BSNES_STATE_DIR"
 
 echo
 echo "Creating/verifying BareFront bsnes baseline..."
 
 if [[ -f "$BSNES_CONFIG" ]]; then
-
     echo "Existing bsnes user configuration found."
-    echo "Preserving emulator-owned settings:"
-    echo "  $BSNES_CONFIG"
-    echo
-    echo "Enforcing BareFront-owned integration:"
-    echo "  Esc = exit directly to BareFront"
+    echo "Preserving unrelated emulator settings."
+    BSNES_CONFIG_ACTION="REPAIR BAREFRONT INTEGRATION"
+else
+    echo "No existing bsnes configuration found."
+    BSNES_CONFIG_ACTION="CREATE BASELINE"
+fi
 
-    python3 - "$BSNES_CONFIG" <<'PYBSNESPRESERVE'
+python3 - \
+    "$BSNES_CONFIG" \
+    "$BSNES_SAVE_DIR" \
+    "$BSNES_STATE_DIR" \
+    <<'PYBSNESCONFIG'
 from pathlib import Path
-import re
 import sys
 
 config = Path(sys.argv[1])
-lines = config.read_text().splitlines()
+save_dir = sys.argv[2]
+state_dir = sys.argv[3]
 
-out = []
-found = False
+if config.exists():
+    lines = config.read_text().splitlines()
+else:
+    lines = []
 
-for line in lines:
-    match = re.fullmatch(
-        r"([ \t]*)QuitEmulator(?:[ \t]*:[ \t]*.*)?",
-        line,
-    )
 
-    if match:
-        out.append(
-            f"{match.group(1)}QuitEmulator: 0x1/0/0"
-        )
-        found = True
-    else:
-        out.append(line)
+def ensure(section, key, value):
+    global lines
 
-if not found:
-    raise SystemExit(
-        "bsnes QuitEmulator setting was not found"
-    )
+    try:
+        section_index = lines.index(section)
+    except ValueError:
+        if lines and lines[-1] != "":
+            lines.append("")
+        lines.append(section)
+        section_index = len(lines) - 1
 
-config.write_text("\n".join(out) + "\n")
-PYBSNESPRESERVE
+    section_end = len(lines)
 
-    echo "Action: REPAIR BAREFRONT INTEGRATION"
+    for i in range(section_index + 1, len(lines)):
+        line = lines[i]
 
-else
+        if line and not line[0].isspace():
+            section_end = i
+            break
 
-    mkdir -p "$BSNES_CONFIG_DIR"
+    prefix = f"  {key}:"
 
-    cat > "$BSNES_CONFIG" <<EOF
-Path
-  Saves: $BSNES_SAVE_DIR/
-  States: $BSNES_STATE_DIR/
+    for i in range(section_index + 1, section_end):
+        if lines[i].startswith(prefix):
+            lines[i] = f"  {key}: {value}"
+            return
 
-Hotkey
-  QuitEmulator: 0x1/0/0
-EOF
+    lines.insert(section_end, f"  {key}: {value}")
 
-    echo "BareFront bsnes baseline created:"
-    echo "  $BSNES_CONFIG"
-    echo
-    echo "  Esc: exit directly to BareFront"
-    echo "  SRAM saves: $BSNES_SAVE_DIR/"
-    echo "  Save states: $BSNES_STATE_DIR/"
-    echo "  Renderer: bsnes default"
-    echo "  Action: CREATE BASELINE"
 
-fi
+ensure("Path", "Saves", f"{save_dir}/")
+ensure("Path", "States", f"{state_dir}/")
+
+ensure("Hotkey", "QuitEmulator", "0x1/0/0")
+
+ensure("Video", "Driver", "XShm")
+ensure("Video", "Shader", "None")
+ensure("Video", "Output", "Scale")
+ensure("Video", "Multiplier", "1")
+ensure("Video", "AspectCorrection", "false")
+ensure("Video", "Overscan", "false")
+ensure("Video", "Blur", "false")
+ensure("Video", "Filter", "None")
+ensure("Video", "Luminance", "100")
+ensure("Video", "Saturation", "100")
+ensure("Video", "Gamma", "100")
+ensure("Video", "Dimming", "false")
+
+ensure("Audio", "Driver", "ALSA")
+ensure("Audio", "Device", "default")
+ensure("Audio", "Blocking", "true")
+
+ensure("General", "StatusBar", "false")
+
+config.write_text("\n".join(lines) + "\n")
+PYBSNESCONFIG
+
+echo
+echo "BareFront bsnes integration:"
+echo "  Video: raw / unfiltered"
+echo "  Gamma: 100"
+echo "  Dimming: false"
+echo "  Audio: ALSA default"
+echo "  Status bar: disabled"
+echo "  Esc: exit directly to BareFront"
+echo "  SRAM saves: $BSNES_SAVE_DIR/"
+echo "  Save states: $BSNES_STATE_DIR/"
+echo "  Action: $BSNES_CONFIG_ACTION"
 
 echo
 echo "No SNES BIOS is required for ordinary cartridge games."
 echo
 echo "BareFront launch command will later use:"
-echo "  $BSNES_EXE {rom}"
+echo "  $BSNES_LAUNCHER {rom}"
 echo
 echo "bsnes stage complete."
 
@@ -4693,7 +4824,7 @@ arguments={rom}
 [snes]
 roms=roms/snes
 screenshots=assets/games/snes
-emulator=$BSNES_EXE
+emulator=$BSNES_LAUNCHER
 arguments={rom}
 
 [ps1]
