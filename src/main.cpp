@@ -3365,6 +3365,111 @@ int main()
     }
 
 
+    // --------------------------------------------------
+    // Startup splash
+    //
+    // Render before enabling BareFront's 1280x720 logical
+    // canvas so the splash can use the real display output.
+    //
+    // On a 1920x1080 display the 1080p splash is presented
+    // 1:1. Other aspect ratios are fitted and centred.
+    // A short minimum display time lets the branding register.
+    // --------------------------------------------------
+
+    SDL_Texture* splashTexture =
+        loadTexture(
+            renderer,
+            "assets/ui/splash.png"
+        );
+
+
+    if (splashTexture)
+    {
+        int outputWidth = 0;
+        int outputHeight = 0;
+        int splashWidth = 0;
+        int splashHeight = 0;
+
+        SDL_GetRendererOutputSize(
+            renderer,
+            &outputWidth,
+            &outputHeight
+        );
+
+        SDL_QueryTexture(
+            splashTexture,
+            nullptr,
+            nullptr,
+            &splashWidth,
+            &splashHeight
+        );
+
+        SDL_SetRenderDrawColor(
+            renderer,
+            0,
+            0,
+            0,
+            255
+        );
+
+        SDL_RenderClear(
+            renderer
+        );
+
+        if (outputWidth > 0 &&
+            outputHeight > 0 &&
+            splashWidth > 0 &&
+            splashHeight > 0)
+        {
+            const double scaleX =
+                static_cast<double>(outputWidth) /
+                splashWidth;
+
+            const double scaleY =
+                static_cast<double>(outputHeight) /
+                splashHeight;
+
+            const double scale =
+                std::min(
+                    scaleX,
+                    scaleY
+                );
+
+            SDL_Rect splashArea =
+            {
+                0,
+                0,
+                static_cast<int>(
+                    splashWidth * scale
+                ),
+                static_cast<int>(
+                    splashHeight * scale
+                )
+            };
+
+            splashArea.x =
+                (outputWidth - splashArea.w) / 2;
+
+            splashArea.y =
+                (outputHeight - splashArea.h) / 2;
+
+            SDL_RenderCopy(
+                renderer,
+                splashTexture,
+                nullptr,
+                &splashArea
+            );
+        }
+
+        SDL_RenderPresent(
+            renderer
+        );
+    }
+
+    const Uint32 splashPresentedAt =
+        SDL_GetTicks();
+
+
     SDL_RenderSetLogicalSize(
         renderer,
         SCREEN_WIDTH,
@@ -3831,6 +3936,38 @@ int main()
 
     bool running =
         true;
+
+
+    // --------------------------------------------------
+    // Startup is complete.
+    // The normal BareFront presentation takes over now.
+    // --------------------------------------------------
+
+    if (splashTexture)
+    {
+        const Uint32 splashElapsed =
+            SDL_GetTicks() -
+            splashPresentedAt;
+
+        const Uint32 splashMinimumTime =
+            2000;
+
+        if (splashElapsed <
+            splashMinimumTime)
+        {
+            SDL_Delay(
+                splashMinimumTime -
+                splashElapsed
+            );
+        }
+
+        SDL_DestroyTexture(
+            splashTexture
+        );
+
+        splashTexture =
+            nullptr;
+    }
 
 
     // --------------------------------------------------
