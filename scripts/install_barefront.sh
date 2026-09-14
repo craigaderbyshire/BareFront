@@ -203,6 +203,7 @@ BASE_PACKAGES=(
     rsync
     jq
     python3
+    pulseaudio-utils
 )
 
 BAREFRONT_PACKAGES=(
@@ -505,12 +506,12 @@ fi
 
 
 # ------------------------------------------------------------
-# Mednafen - Saturn + PC Engine
-# One emulator package services two BareFront systems.
+# Mednafen - Mega Drive + Saturn + PC Engine
+# One emulator package services three BareFront systems.
 # ------------------------------------------------------------
 
 if install_debian_emulator \
-    "Saturn + PC Engine / Mednafen" \
+    "Mega Drive + Saturn + PC Engine / Mednafen" \
     "mednafen" \
     "/usr/games/mednafen"
 then
@@ -740,356 +741,181 @@ echo
 
 
 # ============================================================
-# Stage 3B - Locally managed emulators
-# BlastEm - Mega Drive
+# Stage 3B - Mega Drive
+# Mednafen
 # ============================================================
 
-heading "STAGE 3B / BLASTEM"
+heading "STAGE 3B / MEGA DRIVE / MEDNAFEN"
 
-# BlastEm's official stable release is considerably older than
-# the current upstream code. BareFront pins this exact upstream
-# build because it provides the separate ui.menu / ui.exit
-# behaviour required for clean Esc -> BareFront operation.
-#
-# This build has been manually validated with BareFront.
-BLASTEM_VERSION="0.6.3-pre-8013468ed981"
-BLASTEM_ARCHIVE="blastem64-$BLASTEM_VERSION.tar.gz"
-BLASTEM_URL="https://www.retrodev.com/blastem/nightlies/$BLASTEM_ARCHIVE"
-BLASTEM_SHA256="26539e1efe89aea1d79663372856e40fe874fa141517276bedc47c0c476604c8"
-BLASTEM_EXE_SHA256="3c154213a1e98c492234e17b4ad4191b86c733bb80dd09ad352c556c7f9b18d4"
+MEDNAFEN_MD_EXE="/usr/games/mednafen"
+MEDNAFEN_MD_LOCAL_DIR="$BAREFRONT_DIR/emulators/mednafen"
+MEDNAFEN_MD_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mednafen_md.sh"
+MEDNAFEN_MD_PROFILE="$BAREFRONT_DIR/saves/megadrive/mednafen"
+MEDNAFEN_MD_CONFIG="$MEDNAFEN_MD_PROFILE/mednafen.cfg"
 
-BLASTEM_DIR="$BAREFRONT_DIR/emulators/blastem"
-BLASTEM_EXE="$BLASTEM_DIR/blastem"
-BLASTEM_VERSION_FILE="$BLASTEM_DIR/VERSION.txt"
-BLASTEM_HASH_FILE="$BLASTEM_DIR/BINARY_SHA256.txt"
+MEDNAFEN_MD_BARECRT_DIR="$BAREFRONT_DIR/assets/shaders/barecrt"
+MEDNAFEN_MD_BARECRT_SHADER="$MEDNAFEN_MD_BARECRT_DIR/BareCRT.fx"
+MEDNAFEN_MD_RESHADE_INCLUDE="$MEDNAFEN_MD_BARECRT_DIR/ReShade.fxh"
+MEDNAFEN_MD_OVERLAY="$BAREFRONT_DIR/assets/overlays/megadrive.png"
 
-BLASTEM_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/blastem"
-BLASTEM_CONFIG="$BLASTEM_CONFIG_DIR/blastem.cfg"
+VKBASALT_LAYER="/usr/share/vulkan/implicit_layer.d/vkBasalt.json"
 
-echo "BareFront uses BlastEm for:"
-echo "  Mega Drive"
-echo
-echo "Pinned tested build:"
-echo "  $BLASTEM_VERSION"
-echo
-echo "Install location:"
-echo "  $BLASTEM_DIR"
+echo "Configuring BareFront Mega Drive integration..."
 echo
 
-if [[ -x "$BLASTEM_EXE" ]]; then
+if [[ ! -x "$MEDNAFEN_MD_EXE" ]]; then
+    die "Mednafen executable not found: $MEDNAFEN_MD_EXE"
+fi
 
-    EXISTING_BLASTEM_HASH="$(
-        sha256sum "$BLASTEM_EXE" | awk '{print $1}'
-    )"
+if [[ ! -f "$MEDNAFEN_MD_LAUNCHER" ]]; then
+    die "Tracked Mega Drive launcher missing: $MEDNAFEN_MD_LAUNCHER"
+fi
 
-    if [[ "$EXISTING_BLASTEM_HASH" != "$BLASTEM_EXE_SHA256" ]]; then
-        echo "Existing managed BlastEm executable:"
-        echo "  $BLASTEM_EXE"
-        echo
-        echo "Expected SHA-256:"
-        echo "  $BLASTEM_EXE_SHA256"
-        echo "Found SHA-256:"
-        echo "  $EXISTING_BLASTEM_HASH"
-        echo
-        die "BareFront will not overwrite or trust a different BlastEm build automatically."
-    fi
+chmod +x "$MEDNAFEN_MD_LAUNCHER"
 
-    # The binary itself exactly matches the pinned tested build.
-    # Metadata may legitimately be absent on an installation made
-    # by an earlier BareFront installer, so recreate it safely.
-    printf '%s\n' "$BLASTEM_VERSION" > "$BLASTEM_VERSION_FILE"
-    printf '%s\n' "$BLASTEM_EXE_SHA256" > "$BLASTEM_HASH_FILE"
+if [[ ! -x "$MEDNAFEN_MD_LAUNCHER" ]]; then
+    die "Mega Drive launcher is not executable."
+fi
 
-    echo "Pinned BlastEm build is already installed."
-    echo "Executable:"
-    echo "  $BLASTEM_EXE"
-    echo "SHA-256: OK"
-    echo "Action: SKIP"
+if ! command -v pactl >/dev/null 2>&1; then
+    die "Mega Drive direct-HDMI audio requires pactl."
+fi
 
+if ! command -v pasuspender >/dev/null 2>&1; then
+    die "Mega Drive direct-HDMI audio requires pasuspender."
+fi
+
+if [[ ! -x "$GAMESCOPE_EXE" ]]; then
+    die "Mega Drive presentation requires Gamescope: $GAMESCOPE_EXE"
+fi
+
+if [[ ! -f "$VKBASALT_LAYER" ]]; then
+    die "vkBasalt Vulkan layer is missing: $VKBASALT_LAYER"
+fi
+
+if [[ ! -s "$MEDNAFEN_MD_BARECRT_SHADER" ]]; then
+    die "BareCRT shader is missing: $MEDNAFEN_MD_BARECRT_SHADER"
+fi
+
+if [[ ! -s "$MEDNAFEN_MD_RESHADE_INCLUDE" ]]; then
+    die "BareCRT ReShade include is missing: $MEDNAFEN_MD_RESHADE_INCLUDE"
+fi
+
+if [[ ! -s "$MEDNAFEN_MD_OVERLAY" ]]; then
+    die "Mega Drive overlay artwork is missing: $MEDNAFEN_MD_OVERLAY"
+fi
+
+mkdir -p \
+    "$MEDNAFEN_MD_LOCAL_DIR" \
+    "$MEDNAFEN_MD_PROFILE" \
+    "$BAREFRONT_DIR/roms/megadrive" \
+    "$BAREFRONT_DIR/saves/megadrive" \
+    "$BAREFRONT_DIR/assets/games/megadrive" \
+    "$BAREFRONT_DIR/assets/videos/megadrive"
+
+if [[ ! -f "$MEDNAFEN_MD_CONFIG" ]]; then
+    echo "Creating isolated Mednafen Mega Drive profile..."
+
+    MEDNAFEN_HOME="$MEDNAFEN_MD_PROFILE" \
+        "$MEDNAFEN_MD_EXE" -help \
+        > "$LOG_DIR/mednafen-megadrive-profile.log" \
+        2>&1 || true
+
+    echo "  Action: CREATE"
 else
-
-    if [[ -d "$BLASTEM_DIR" ]] &&
-       [[ -n "$(find "$BLASTEM_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]
-    then
-        die "A non-empty unrecognised BlastEm directory already exists: $BLASTEM_DIR"
-    fi
-
-    TEMP_DIR="$(mktemp -d)"
-    TEMP_ARCHIVE="$TEMP_DIR/$BLASTEM_ARCHIVE"
-    TEMP_EXTRACT="$TEMP_DIR/extract"
-
-    mkdir -p "$TEMP_EXTRACT"
-
-    echo "Downloading pinned BlastEm build..."
-
-    if ! curl -fL --progress-bar \
-        "$BLASTEM_URL" \
-        -o "$TEMP_ARCHIVE"
-    then
-        rm -rf "$TEMP_DIR"
-        die "BlastEm download failed."
-    fi
-
-    echo
-    echo "Verifying BlastEm SHA-256..."
-
-    ACTUAL_BLASTEM_SHA256="$(
-        sha256sum "$TEMP_ARCHIVE" | awk '{print $1}'
-    )"
-
-    if [[ "$ACTUAL_BLASTEM_SHA256" != "$BLASTEM_SHA256" ]]; then
-        echo "Expected:"
-        echo "  $BLASTEM_SHA256"
-        echo "Received:"
-        echo "  $ACTUAL_BLASTEM_SHA256"
-        rm -rf "$TEMP_DIR"
-        die "BlastEm archive SHA-256 verification failed."
-    fi
-
-    echo "SHA-256: OK"
-    echo
-    echo "Extracting BlastEm..."
-
-    if ! tar -xzf "$TEMP_ARCHIVE" -C "$TEMP_EXTRACT"; then
-        rm -rf "$TEMP_DIR"
-        die "Could not extract BlastEm archive."
-    fi
-
-    FOUND_BLASTEM="$(
-        find "$TEMP_EXTRACT" \
-            -type f \
-            -name blastem \
-            -print \
-            -quit
-    )"
-
-    if [[ -z "$FOUND_BLASTEM" ]] || [[ ! -x "$FOUND_BLASTEM" ]]; then
-        rm -rf "$TEMP_DIR"
-        die "BlastEm executable was not found in the extracted archive."
-    fi
-
-    FOUND_BLASTEM_ROOT="$(dirname "$FOUND_BLASTEM")"
-
-    mkdir -p "$BLASTEM_DIR"
-
-    # Preserve the complete upstream release directory:
-    # executable, default.cfg, systems.cfg, shaders,
-    # controller database, menu ROM and bundled libraries.
-    cp -a "$FOUND_BLASTEM_ROOT"/. "$BLASTEM_DIR"/
-
-    chmod +x "$BLASTEM_EXE"
-
-    INSTALLED_BLASTEM_HASH="$(
-        sha256sum "$BLASTEM_EXE" | awk '{print $1}'
-    )"
-
-    if [[ "$INSTALLED_BLASTEM_HASH" != "$BLASTEM_EXE_SHA256" ]]; then
-        rm -rf "$TEMP_DIR"
-        die "Extracted BlastEm executable SHA-256 verification failed."
-    fi
-
-    printf '%s\n' "$BLASTEM_VERSION" > "$BLASTEM_VERSION_FILE"
-    printf '%s\n' "$BLASTEM_EXE_SHA256" > "$BLASTEM_HASH_FILE"
-
-    rm -rf "$TEMP_DIR"
-
-    echo "Executable SHA-256: OK"
-    echo "Action: INSTALL"
-
+    echo "Isolated Mednafen Mega Drive profile already exists."
+    echo "  Action: PRESERVE"
 fi
 
-echo
-echo "Verifying BlastEm..."
-
-if [[ ! -x "$BLASTEM_EXE" ]]; then
-    die "BlastEm executable verification failed: $BLASTEM_EXE"
+if [[ ! -f "$MEDNAFEN_MD_CONFIG" ]]; then
+    die "Mednafen did not create the Mega Drive profile."
 fi
 
-FINAL_BLASTEM_HASH="$(
-    sha256sum "$BLASTEM_EXE" | awk '{print $1}'
+MEDNAFEN_MD_CONFIG_PATH="$MEDNAFEN_MD_CONFIG" python3 - <<'PYMEDNAFEN_MD'
+import os
+from pathlib import Path
+
+path = Path(os.environ["MEDNAFEN_MD_CONFIG_PATH"])
+original = path.read_text()
+lines = original.splitlines()
+
+enforced = {
+    "command.exit": "keyboard 0x0 41",
+    "md.correct_aspect": "0",
+    "md.scanlines": "0",
+    "md.shader": "none",
+    "md.stretch": "0",
+    "md.videoip": "0",
+    "md.xscale": "1.000000",
+    "md.yscale": "1.000000",
+}
+
+seen = set()
+
+for index, line in enumerate(lines):
+    parts = line.split(None, 1)
+
+    if not parts:
+        continue
+
+    key = parts[0]
+
+    if key in enforced:
+        lines[index] = f"{key} {enforced[key]}"
+        seen.add(key)
+
+for key, value in enforced.items():
+    if key not in seen:
+        lines.append(f"{key} {value}")
+
+updated = "\n".join(lines) + "\n"
+
+if updated != original:
+    path.write_text(updated)
+
+resolved = {}
+
+for line in lines:
+    parts = line.split(None, 1)
+
+    if len(parts) == 2:
+        resolved[parts[0]] = parts[1].strip()
+
+for key, value in enforced.items():
+    if resolved.get(key) != value:
+        raise SystemExit(
+            f"Could not enforce Mega Drive Mednafen setting: {key}"
+        )
+
+print("  Raw 1x video profile: OK")
+print("  Esc exit binding: OK")
+PYMEDNAFEN_MD
+
+MEDNAFEN_MD_PACKAGE_VERSION="$(
+    dpkg-query -W -f='${Version}' mednafen 2>/dev/null || true
 )"
 
-if [[ "$FINAL_BLASTEM_HASH" != "$BLASTEM_EXE_SHA256" ]]; then
-    die "Installed BlastEm executable does not match the pinned BareFront build."
-fi
-
-if [[ ! -f "$BLASTEM_VERSION_FILE" ]] ||
-   [[ "$(cat "$BLASTEM_VERSION_FILE")" != "$BLASTEM_VERSION" ]]
-then
-    die "BlastEm version metadata verification failed."
-fi
-
-if [[ ! -f "$BLASTEM_HASH_FILE" ]] ||
-   [[ "$(cat "$BLASTEM_HASH_FILE")" != "$BLASTEM_EXE_SHA256" ]]
-then
-    die "BlastEm executable metadata verification failed."
-fi
-
-echo "Executable: OK"
-echo "  $BLASTEM_EXE"
-echo "Version:"
-echo "  $BLASTEM_VERSION"
-echo "SHA-256:"
-echo "  $FINAL_BLASTEM_HASH"
-
-
-# ------------------------------------------------------------
-# BareFront BlastEm baseline configuration
-# ------------------------------------------------------------
+cat > "$MEDNAFEN_MD_LOCAL_DIR/MEGADRIVE_VERSION.txt" <<EOF
+BareFront managed emulator integration
+System: Mega Drive / Genesis
+Emulator: Mednafen
+Package version: ${MEDNAFEN_MD_PACKAGE_VERSION:-Unknown}
+Executable: $MEDNAFEN_MD_EXE
+BareFront launcher: $MEDNAFEN_MD_LAUNCHER
+BareFront profile: $MEDNAFEN_MD_PROFILE
+Presentation: Gamescope integer scaling + external BareCRT
+EOF
 
 echo
-echo "Configuring BareFront BlastEm baseline..."
-
-if [[ ! -f "$BLASTEM_CONFIG" ]]; then
-
-    if [[ ! -f "$BLASTEM_DIR/default.cfg" ]]; then
-        die "BlastEm default.cfg is missing: $BLASTEM_DIR/default.cfg"
-    fi
-
-    mkdir -p "$BLASTEM_CONFIG_DIR"
-
-    cp "$BLASTEM_DIR/default.cfg" "$BLASTEM_CONFIG"
-
-    python3 - "$BLASTEM_CONFIG" <<'PYBLASTEM'
-from pathlib import Path
-import re
-import sys
-
-path = Path(sys.argv[1])
-lines = path.read_text().splitlines()
-
-out = []
-exit_binding_written = False
-save_path_written = False
-
-for line in lines:
-    stripped = line.strip()
-    indent = line[:len(line) - len(line.lstrip())]
-
-    # BareFront owns P = screenshot.
-    if re.fullmatch(r"p\s+ui\.screenshot", stripped):
-        continue
-
-    # BareFront owns R = 5-second recording.
-    if re.fullmatch(r"r\s+ui\.release_mouse", stripped):
-        continue
-
-    # Avoid an existing F1 menu/exit mapping before adding ours.
-    if re.fullmatch(r"f1\s+ui\.(menu|exit)", stripped):
-        continue
-
-    # Esc must quit BlastEm immediately and return to BareFront.
-    if re.fullmatch(r"esc\s+ui\.(menu|exit)", stripped):
-        out.append(f"{indent}esc ui.exit")
-        out.append(f"{indent}f1 ui.menu")
-        exit_binding_written = True
-        continue
-
-    # Keep Mega Drive saves inside the BareFront installation.
-    if stripped.startswith("save_path "):
-        out.append(
-            f"{indent}save_path $HOME/BareFront/saves/megadrive/$ROMNAME"
-        )
-        save_path_written = True
-        continue
-
-    out.append(line)
-
-if not exit_binding_written:
-    raise SystemExit("BlastEm Esc binding was not found in default.cfg")
-
-if not save_path_written:
-    raise SystemExit("BlastEm save_path was not found in default.cfg")
-
-path.write_text("\n".join(out) + "\n")
-PYBLASTEM
-
-    echo "BareFront baseline config created:"
-    echo "  $BLASTEM_CONFIG"
-    echo
-    echo "Controls:"
-    echo "  Esc = exit directly to BareFront"
-    echo "  F1  = BlastEm menu"
-    echo "  P   = reserved for BareFront screenshot"
-    echo "  R   = reserved for BareFront video capture"
-    echo
-    echo "Mega Drive saves:"
-    echo '  $HOME/BareFront/saves/megadrive/$ROMNAME'
-    echo "Action: CREATE BASELINE"
-
-else
-
-    echo "Existing BlastEm user configuration found:"
-    echo "  $BLASTEM_CONFIG"
-    echo
-    echo "Preserving emulator-owned settings."
-    echo "Enforcing BareFront-owned integration:"
-    echo "  Esc = exit directly to BareFront"
-    echo "  Config version = current managed BlastEm version"
-
-    python3 - "$BLASTEM_CONFIG" "$BLASTEM_DIR/default.cfg" <<'PYBLASTEMPRESERVE'
-from pathlib import Path
-import re
-import sys
-
-config = Path(sys.argv[1])
-default = Path(sys.argv[2])
-
-default_text = default.read_text()
-
-match = re.search(
-    r"(?m)^[ \t]*version[ \t]+([0-9]+)[ \t]*$",
-    default_text,
-)
-
-if not match:
-    raise SystemExit(
-        "Managed BlastEm default.cfg has no config version"
-    )
-
-current_version = match.group(1)
-
-lines = config.read_text().splitlines()
-out = []
-
-esc_found = False
-version_found = False
-
-for line in lines:
-    stripped = line.strip()
-    indent = line[:len(line) - len(line.lstrip())]
-
-    if re.fullmatch(r"esc\s+ui\.(menu|exit)", stripped):
-        out.append(f"{indent}esc ui.exit")
-        esc_found = True
-        continue
-
-    if re.fullmatch(r"version\s+[0-9]+", stripped):
-        out.append(f"{indent}version {current_version}")
-        version_found = True
-        continue
-
-    out.append(line)
-
-if not esc_found:
-    raise SystemExit(
-        "BlastEm Esc binding was not found in existing config"
-    )
-
-if not version_found:
-    if out and out[-1] != "":
-        out.append("")
-    out.append(f"version {current_version}")
-
-config.write_text("\n".join(out) + "\n")
-PYBLASTEMPRESERVE
-
-    echo "Action: REPAIR BAREFRONT INTEGRATION"
-
-fi
-
+echo "Mega Drive integration:"
+echo "  Emulator: Mednafen"
+echo "  Raw H40:  320x224"
+echo "  Raw H32:  256x224 within the 320x224 presentation surface"
+echo "  Gamescope output: 1280x896"
+echo "  Audio: direct ALSA device derived from current PulseAudio sink"
+echo "  Esc: direct return to BareFront"
 echo
-echo "BlastEm stage complete."
+echo "Mega Drive stage complete."
 
 
 # ============================================================
@@ -4829,7 +4655,7 @@ cat > "$TEMP_CONFIG" <<EOF
 [megadrive]
 roms=roms/megadrive
 screenshots=assets/games/megadrive
-emulator=$BLASTEM_EXE
+emulator=$MEDNAFEN_MD_LAUNCHER
 arguments={rom}
 
 [nes]
@@ -5020,30 +4846,45 @@ echo
 # However, specific values previously generated by BareFront
 # itself may be migrated when their meaning has changed.
 #
-# This migration:
+# This migration moves exact legacy BareFront Mega Drive
+# emulator paths to the Mednafen presentation launcher.
+#
+# Recognised legacy values:
 #   /usr/games/blastem
-#       ->
-#   BareFront managed pinned BlastEm
+#   <BareFront>/emulators/blastem/blastem
+#   emulators/blastem/blastem
 #
 # It runs only on production configs. Development configs using
 # testroms/ are intentionally left untouched.
 # ------------------------------------------------------------
 
-BLASTEM_MIGRATION_BACKUP="$LOG_DIR/barefront.ini.pre-blastem-migration"
+MEDNAFEN_MD_MIGRATION_BACKUP="$LOG_DIR/barefront.ini.pre-megadrive-mednafen-migration"
 
 if [[ -f "$CONFIG_FILE" ]] &&
    ! grep -Eq '^roms=testroms/' "$CONFIG_FILE"
 then
 
-    BLASTEM_MIGRATION_RESULT="$(
-        python3 - "$CONFIG_FILE" "$BLASTEM_EXE" "$BLASTEM_MIGRATION_BACKUP" <<'PYMIGRATE'
+    MEDNAFEN_MD_MIGRATION_RESULT="$(
+        python3 - \
+            "$CONFIG_FILE" \
+            "$BAREFRONT_DIR/emulators/blastem/blastem" \
+            "$MEDNAFEN_MD_LAUNCHER" \
+            "$MEDNAFEN_MD_MIGRATION_BACKUP" \
+            <<'PYMIGRATE_MD'
 from pathlib import Path
 import shutil
 import sys
 
 config = Path(sys.argv[1])
-new_exe = sys.argv[2]
-backup = Path(sys.argv[3])
+old_managed = sys.argv[2]
+new_launcher = sys.argv[3]
+backup = Path(sys.argv[4])
+
+legacy_values = {
+    "emulator=/usr/games/blastem",
+    f"emulator={old_managed}",
+    "emulator=emulators/blastem/blastem",
+}
 
 lines = config.read_text().splitlines()
 
@@ -5058,7 +4899,7 @@ for index, line in enumerate(lines):
         continue
 
     if in_megadrive and stripped.startswith("emulator="):
-        if stripped == "emulator=/usr/games/blastem":
+        if stripped in legacy_values:
             target = index
         break
 
@@ -5072,26 +4913,25 @@ if not backup.exists():
     shutil.copy2(config, backup)
 
 indent = lines[target][:len(lines[target]) - len(lines[target].lstrip())]
-lines[target] = f"{indent}emulator={new_exe}"
+lines[target] = f"{indent}emulator={new_launcher}"
 
 config.write_text("\n".join(lines) + "\n")
 
 print("MIGRATED")
-PYMIGRATE
+PYMIGRATE_MD
     )"
 
-    if [[ "$BLASTEM_MIGRATION_RESULT" == "MIGRATED" ]]; then
+    if [[ "$MEDNAFEN_MD_MIGRATION_RESULT" == "MIGRATED" ]]; then
         echo "Migrated legacy Mega Drive emulator path:"
-        echo "  /usr/games/blastem"
+        echo "  BlastEm"
         echo "    ->"
-        echo "  $BLASTEM_EXE"
+        echo "  $MEDNAFEN_MD_LAUNCHER"
         echo
         echo "Previous configuration backed up to:"
-        echo "  $BLASTEM_MIGRATION_BACKUP"
+        echo "  $MEDNAFEN_MD_MIGRATION_BACKUP"
     fi
 
 fi
-
 
 
 # ------------------------------------------------------------

@@ -9,7 +9,7 @@
 [megadrive]
 roms=roms/megadrive
 screenshots=assets/games/megadrive
-emulator=emulators/blastem/blastem
+emulator=scripts/launch_mednafen_md.sh
 arguments={rom}
 
 [nes]
