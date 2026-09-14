@@ -1101,6 +1101,7 @@ heading "STAGE 3B / MESEN"
 
 MESEN_DIR="$BAREFRONT_DIR/emulators/mesen"
 MESEN_EXE="$MESEN_DIR/Mesen"
+MESEN_NES_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mesen_nes.sh"
 
 # BareFront-tested MesenCE release.
 MESEN_VERSION="2.2.1"
@@ -1388,6 +1389,7 @@ with config.open("r", encoding="utf-8-sig") as f:
     data = json.load(f)
 
 preferences = data.setdefault("Preferences", {})
+preferences["AutoHideMenu"] = True
 shortcuts = preferences.setdefault("ShortcutKeys", [])
 
 def set_shortcut(name, key1):
@@ -1448,6 +1450,7 @@ data = {
     "ConfigUpgrade": config_upgrade,
     "Preferences": {
         "AutomaticallyCheckForUpdates": False,
+        "AutoHideMenu": True,
 
         "OverrideSaveDataFolder": True,
         "SaveDataFolder": save_dir,
@@ -4818,7 +4821,7 @@ arguments={rom}
 [nes]
 roms=roms/nes
 screenshots=assets/games/nes
-emulator=$MESEN_EXE
+emulator=$MESEN_NES_LAUNCHER
 arguments={rom}
 
 [snes]

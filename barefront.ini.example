@@ -15,7 +15,7 @@ arguments={rom}
 [nes]
 roms=roms/nes
 screenshots=assets/games/nes
-emulator=emulators/mesen/Mesen
+emulator=scripts/launch_mesen_nes.sh
 arguments={rom}
 
 [snes]
