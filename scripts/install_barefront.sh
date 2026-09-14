@@ -1422,6 +1422,7 @@ def set_shortcut(name, key1):
     })
 
 set_shortcut("Exit", 13)
+set_shortcut("Pause", 0)
 set_shortcut("TakeScreenshot", 0)
 
 with config.open("w", encoding="utf-8") as f:
@@ -1476,6 +1477,19 @@ data = {
                 "Shortcut": "Exit",
                 "KeyCombination": {
                     "Key1": 13,
+                    "Key2": 0,
+                    "Key3": 0
+                },
+                "KeyCombination2": {
+                    "Key1": 0,
+                    "Key2": 0,
+                    "Key3": 0
+                }
+            },
+            {
+                "Shortcut": "Pause",
+                "KeyCombination": {
+                    "Key1": 0,
                     "Key2": 0,
                     "Key3": 0
                 },
