@@ -460,6 +460,8 @@ fi
 
 STELLA_BASE_DIR="$BAREFRONT_DIR/saves/atari2600/stella"
 STELLA_CONFIG="$STELLA_BASE_DIR/stella.sqlite3"
+STELLA_LAUNCHER="$BAREFRONT_DIR/scripts/launch_stella.sh"
+STELLA_OVERLAY="$BAREFRONT_DIR/assets/overlays/atari2600.png"
 
 mkdir -p "$STELLA_BASE_DIR"
 
@@ -502,6 +504,21 @@ PYSTELLA
     echo "  Save states: $STELLA_BASE_DIR/state"
     echo "  Action: CREATE BASELINE"
 
+fi
+
+
+if [[ ! -f "$STELLA_LAUNCHER" ]]; then
+    die "Tracked Atari 2600 launcher missing: $STELLA_LAUNCHER"
+fi
+
+chmod +x "$STELLA_LAUNCHER"
+
+if [[ ! -x "$STELLA_LAUNCHER" ]]; then
+    die "Atari 2600 launcher is not executable: $STELLA_LAUNCHER"
+fi
+
+if [[ ! -s "$STELLA_OVERLAY" ]]; then
+    die "Atari 2600 overlay is missing: $STELLA_OVERLAY"
 fi
 
 
@@ -4733,8 +4750,8 @@ arguments={rom}
 [atari2600]
 roms=roms/atari2600
 screenshots=assets/games/atari2600
-emulator=/usr/bin/stella
-arguments=-basedir $STELLA_BASE_DIR {rom}
+emulator=$STELLA_LAUNCHER
+arguments={rom}
 
 [c64]
 roms=roms/c64
@@ -5067,6 +5084,122 @@ PYSTELLAMIGRATE
         echo
         echo "Previous configuration backed up to:"
         echo "  $STELLA_MIGRATION_BACKUP"
+    fi
+
+fi
+
+
+# ------------------------------------------------------------
+# Stella presentation-wrapper migration
+#
+# Current BareFront production configs launch Stella directly
+# with the BareFront-managed base directory.  Atari 2600 now uses
+# the tracked BareFront wrapper so Gamescope owns presentation and
+# BareCRT remains external to Stella.
+#
+# Only the exact BareFront-generated direct-Stella configuration is
+# changed. Custom Atari configurations are preserved.
+# ------------------------------------------------------------
+
+STELLA_WRAPPER_MIGRATION_BACKUP="$LOG_DIR/barefront.ini.pre-stella-wrapper-migration"
+
+if [[ -f "$CONFIG_FILE" ]] &&
+   ! grep -Eq '^roms=testroms/' "$CONFIG_FILE"
+then
+
+    STELLA_WRAPPER_MIGRATION_RESULT="$(
+        python3 - \
+            "$CONFIG_FILE" \
+            "$STELLA_BASE_DIR" \
+            "$STELLA_LAUNCHER" \
+            "$STELLA_WRAPPER_MIGRATION_BACKUP" \
+            <<'PYSTELLAWRAPPERMIGRATE'
+from pathlib import Path
+import shutil
+import sys
+
+config = Path(sys.argv[1])
+base_dir = sys.argv[2]
+launcher = sys.argv[3]
+backup = Path(sys.argv[4])
+
+lines = config.read_text().splitlines()
+
+in_atari = False
+emulator_index = None
+arguments_index = None
+
+for index, line in enumerate(lines):
+    stripped = line.strip()
+
+    if stripped.startswith("[") and stripped.endswith("]"):
+        if in_atari:
+            break
+
+        in_atari = stripped == "[atari2600]"
+        continue
+
+    if not in_atari:
+        continue
+
+    if stripped.startswith("emulator="):
+        emulator_index = index
+    elif stripped.startswith("arguments="):
+        arguments_index = index
+
+if emulator_index is None or arguments_index is None:
+    print("NO_CHANGE")
+    raise SystemExit(0)
+
+expected_emulator = "emulator=/usr/bin/stella"
+expected_arguments = f"arguments=-basedir {base_dir} {{rom}}"
+
+if lines[emulator_index].strip() != expected_emulator:
+    print("NO_CHANGE")
+    raise SystemExit(0)
+
+if lines[arguments_index].strip() != expected_arguments:
+    print("NO_CHANGE")
+    raise SystemExit(0)
+
+backup.parent.mkdir(parents=True, exist_ok=True)
+
+if not backup.exists():
+    shutil.copy2(config, backup)
+
+emulator_indent = lines[emulator_index][
+    :len(lines[emulator_index]) - len(lines[emulator_index].lstrip())
+]
+
+arguments_indent = lines[arguments_index][
+    :len(lines[arguments_index]) - len(lines[arguments_index].lstrip())
+]
+
+lines[emulator_index] = (
+    f"{emulator_indent}emulator={launcher}"
+)
+
+lines[arguments_index] = (
+    f"{arguments_indent}arguments={{rom}}"
+)
+
+config.write_text("\n".join(lines) + "\n")
+
+print("MIGRATED")
+PYSTELLAWRAPPERMIGRATE
+    )"
+
+    if [[ "$STELLA_WRAPPER_MIGRATION_RESULT" == "MIGRATED" ]]; then
+        echo
+        echo "Migrated Atari 2600 to BareFront presentation wrapper:"
+        echo "  emulator=/usr/bin/stella"
+        echo "  arguments=-basedir $STELLA_BASE_DIR {rom}"
+        echo "    ->"
+        echo "  emulator=$STELLA_LAUNCHER"
+        echo "  arguments={rom}"
+        echo
+        echo "Previous configuration backed up to:"
+        echo "  $STELLA_WRAPPER_MIGRATION_BACKUP"
     fi
 
 fi
