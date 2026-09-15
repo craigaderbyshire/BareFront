@@ -4355,16 +4355,30 @@ echo "PC Engine integration stage complete."
 heading "STAGE 3C / SATURN"
 
 MEDNAFEN_SATURN_EXE="/usr/games/mednafen"
+MEDNAFEN_SATURN_GAMESCOPE="/usr/games/gamescope"
 MEDNAFEN_SATURN_LOCAL_DIR="$BAREFRONT_DIR/emulators/mednafen"
 MEDNAFEN_SATURN_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mednafen_saturn.sh"
 MEDNAFEN_SATURN_PROFILE="$BAREFRONT_DIR/saves/saturn/mednafen"
 MEDNAFEN_SATURN_CONFIG="$MEDNAFEN_SATURN_PROFILE/mednafen.cfg"
+MEDNAFEN_SATURN_OVERLAY="$BAREFRONT_DIR/assets/overlays/saturn.png"
 
 echo "Configuring BareFront Saturn integration..."
 echo
 
 if [[ ! -x "$MEDNAFEN_SATURN_EXE" ]]; then
     die "Mednafen executable not found: $MEDNAFEN_SATURN_EXE"
+fi
+
+if [[ ! -x "$MEDNAFEN_SATURN_GAMESCOPE" ]]; then
+    die "Gamescope executable not found: $MEDNAFEN_SATURN_GAMESCOPE"
+fi
+
+if ! command -v pactl >/dev/null 2>&1; then
+    die "pactl is required for Saturn audio-device resolution."
+fi
+
+if ! command -v pasuspender >/dev/null 2>&1; then
+    die "pasuspender is required for Saturn direct ALSA audio."
 fi
 
 if [[ ! -f "$MEDNAFEN_SATURN_LAUNCHER" ]]; then
@@ -4375,6 +4389,10 @@ chmod +x "$MEDNAFEN_SATURN_LAUNCHER"
 
 if [[ ! -x "$MEDNAFEN_SATURN_LAUNCHER" ]]; then
     die "Saturn launcher is not executable."
+fi
+
+if [[ ! -s "$MEDNAFEN_SATURN_OVERLAY" ]]; then
+    die "Tracked Saturn overlay missing: $MEDNAFEN_SATURN_OVERLAY"
 fi
 
 mkdir -p \
@@ -4414,10 +4432,14 @@ lines = original.splitlines()
 
 enforced = {
     "command.exit": "keyboard 0x0 41",
+    "ss.correct_aspect": "0",
+    "ss.stretch": "0",
     "ss.videoip": "0",
     "ss.shader": "none",
     "ss.special": "none",
     "ss.scanlines": "0",
+    "ss.xscale": "1.000000",
+    "ss.yscale": "1.000000",
 }
 
 defaults = {
@@ -4504,7 +4526,9 @@ EOF
 echo
 echo "Verifying Saturn integration..."
 echo "  System executable: OK"
+echo "  Gamescope: OK"
 echo "  BareFront launcher: OK"
+echo "  Presentation overlay: OK"
 echo "  Isolated profile: OK"
 echo
 echo "BareFront-owned controls:"
