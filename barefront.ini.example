@@ -39,7 +39,7 @@ arguments=-batch {rom}
 [mastersystem]
 roms=roms/mastersystem
 screenshots=assets/games/mastersystem
-emulator=emulators/mesen/Mesen
+emulator=scripts/launch_mesen_sms.sh
 arguments={rom}
 
 [atari2600]

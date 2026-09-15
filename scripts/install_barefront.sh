@@ -928,6 +928,10 @@ heading "STAGE 3B / MESEN"
 MESEN_DIR="$BAREFRONT_DIR/emulators/mesen"
 MESEN_EXE="$MESEN_DIR/Mesen"
 MESEN_NES_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mesen_nes.sh"
+MESEN_SMS_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mesen_sms.sh"
+MESEN_SMS_OVERLAY="$BAREFRONT_DIR/assets/overlays/mastersystem.png"
+MESEN_MENU_NUDGE_SOURCE="$BAREFRONT_DIR/src/mesen_menu_nudge_helper.cpp"
+MESEN_MENU_NUDGE_HELPER="$MESEN_DIR/mesen_menu_nudge_helper"
 
 # BareFront-tested MesenCE release.
 MESEN_VERSION="2.2.1"
@@ -1187,6 +1191,44 @@ if [[ -f "$MESEN_DIR/VERSION.txt" ]]; then
     echo
     echo "BareFront install record:"
     sed 's/^/  /' "$MESEN_DIR/VERSION.txt"
+fi
+
+if [[ ! -x "$MESEN_NES_LAUNCHER" ]]; then
+    die "Mesen NES BareFront wrapper is missing or not executable."
+fi
+
+if [[ ! -x "$MESEN_SMS_LAUNCHER" ]]; then
+    die "Mesen Master System BareFront wrapper is missing or not executable."
+fi
+
+if [[ ! -s "$MESEN_SMS_OVERLAY" ]]; then
+    die "Master System overlay artwork is missing: $MESEN_SMS_OVERLAY"
+fi
+
+if [[ ! -f "$MESEN_MENU_NUDGE_SOURCE" ]]; then
+    die "Mesen menu nudge helper source is missing."
+fi
+
+if [[ ! -x "$MESEN_MENU_NUDGE_HELPER" ]] || \
+   [[ "$MESEN_MENU_NUDGE_SOURCE" -nt "$MESEN_MENU_NUDGE_HELPER" ]]
+then
+    echo
+    echo "Building Mesen menu nudge helper..."
+
+    g++ -std=c++17 -O2 \
+        "$MESEN_MENU_NUDGE_SOURCE" \
+        -o "$MESEN_MENU_NUDGE_HELPER" \
+        -lX11
+
+    echo "Action: BUILD"
+else
+    echo
+    echo "Mesen menu nudge helper is already current."
+    echo "Action: SKIP"
+fi
+
+if [[ ! -x "$MESEN_MENU_NUDGE_HELPER" ]]; then
+    die "Mesen menu nudge helper build failed."
 fi
 
 echo
@@ -4685,7 +4727,7 @@ arguments={rom}
 [mastersystem]
 roms=roms/mastersystem
 screenshots=assets/games/mastersystem
-emulator=$MESEN_EXE
+emulator=$MESEN_SMS_LAUNCHER
 arguments={rom}
 
 [atari2600]
