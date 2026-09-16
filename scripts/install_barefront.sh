@@ -2459,6 +2459,8 @@ FLYCAST_DIR="$BAREFRONT_DIR/emulators/flycast"
 FLYCAST_EXE="$FLYCAST_DIR/Flycast.AppImage"
 FLYCAST_LAUNCHER="$FLYCAST_DIR/launch_flycast.sh"
 FLYCAST_DATA_DIR="$FLYCAST_DIR/data"
+FLYCAST_GAMESCOPE="/usr/games/gamescope"
+FLYCAST_OVERLAY="$BAREFRONT_DIR/assets/overlays/dreamcast.png"
 
 # BareFront Stage 8 known-good Flycast build.
 FLYCAST_EXPECTED_VERSION="v2.7"
@@ -2766,6 +2768,16 @@ if [[ ! -f "$FLYCAST_CONFIG" ]]; then
 UseReios = no
 FastGDRomLoad = no
 Dreamcast.BiosPath = $FLYCAST_DATA_DIR
+rend.Resolution = 480
+rend.IntegerScale = no
+rend.LinearInterpolation = no
+rend.AnisotropicFiltering = 1
+rend.TextureFiltering = 0
+rend.TextureUpscale2 = 1
+rend.WideScreen = no
+rend.SuperWideScreen = no
+rend.WidescreenGameHacks = no
+rend.ScreenStretching = 100
 EOF
 
     echo "  Flycast BareFront config: CREATED"
@@ -2776,10 +2788,14 @@ else
 
     if ! grep -Fqx 'UseReios = no' "$FLYCAST_CONFIG" \
        || ! grep -Fqx 'FastGDRomLoad = no' "$FLYCAST_CONFIG" \
-       || ! grep -Fqx "Dreamcast.BiosPath = $FLYCAST_DATA_DIR" "$FLYCAST_CONFIG"
+       || ! grep -Fqx "Dreamcast.BiosPath = $FLYCAST_DATA_DIR" "$FLYCAST_CONFIG" \
+       || ! grep -Fqx 'rend.Resolution = 480' "$FLYCAST_CONFIG" \
+       || ! grep -Fqx 'rend.LinearInterpolation = no' "$FLYCAST_CONFIG" \
+       || ! grep -Fqx 'rend.TextureUpscale2 = 1' "$FLYCAST_CONFIG" \
+       || ! grep -Fqx 'rend.WideScreen = no' "$FLYCAST_CONFIG"
     then
         echo "  WARNING: existing Flycast config does not contain"
-        echo "           the complete BareFront Dreamcast BIOS baseline."
+        echo "           the complete BareFront Dreamcast presentation baseline."
     fi
 
 fi
@@ -2835,18 +2851,89 @@ fi
 
 # BareFront-owned launcher adapter.
 # XDG_DATA_HOME routes VMU/NVRAM data into BareFront/saves.
+# Flycast renders a neutral 640x480 surface; Gamescope owns the
+# 2x integer nearest presentation and BareCRT remains external.
 cat > "$FLYCAST_LAUNCHER" <<'EOF'
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ROM="${1:?Usage: launch_flycast.sh <rom>}"
+ROM="${1:-}"
+
+FLYCAST="$ROOT/emulators/flycast/Flycast.AppImage"
+GAMESCOPE="/usr/games/gamescope"
+
+NATIVE_WIDTH=640
+NATIVE_HEIGHT=480
+INTEGER_SCALE=2
+OUTPUT_WIDTH=1280
+OUTPUT_HEIGHT=960
+
+if [[ -z "$ROM" ]]; then
+    echo "Usage: launch_flycast.sh <rom>" >&2
+    exit 1
+fi
+
+if [[ ! -f "$ROM" ]]; then
+    echo "Dreamcast ROM not found: $ROM" >&2
+    exit 1
+fi
+
+if [[ ! -x "$FLYCAST" ]]; then
+    echo "Flycast executable not found: $FLYCAST" >&2
+    exit 1
+fi
+
+if [[ ! -x "$GAMESCOPE" ]]; then
+    echo "Gamescope executable not found: $GAMESCOPE" >&2
+    exit 1
+fi
+
+if [[ ! -f "$ROOT/assets/shaders/barecrt/BareCRT.fx" ]]; then
+    echo "BareCRT shader not found." >&2
+    exit 1
+fi
 
 mkdir -p "$ROOT/saves/dreamcast"
 
 export XDG_DATA_HOME="$ROOT/saves/dreamcast"
 
-exec "$ROOT/emulators/flycast/Flycast.AppImage" "$ROM"
+if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
+    export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+fi
+
+VKBASALT_CONFIG="/tmp/barefront-vkbasalt-dreamcast.conf"
+
+cat > "$VKBASALT_CONFIG" <<EOF2
+effects = barecrt
+barecrt = $ROOT/assets/shaders/barecrt/BareCRT.fx
+reshadeIncludePath = $ROOT/assets/shaders/barecrt
+reshadeTexturePath = $ROOT/assets/shaders/barecrt
+enableOnLaunch = True
+toggleKey = F8
+EOF2
+
+echo "Starting Dreamcast through per-game Gamescope..."
+echo "  Native:      ${NATIVE_WIDTH}x${NATIVE_HEIGHT}"
+echo "  Integer:     ${INTEGER_SCALE}x"
+echo "  Output:      ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}"
+echo "  Filter:      nearest"
+echo "  BareCRT:     enabled"
+
+exec env \
+    ENABLE_VKBASALT=1 \
+    VKBASALT_CONFIG_FILE="$VKBASALT_CONFIG" \
+    "$GAMESCOPE" \
+        -b \
+        -g \
+        -w "$NATIVE_WIDTH" \
+        -h "$NATIVE_HEIGHT" \
+        -W "$OUTPUT_WIDTH" \
+        -H "$OUTPUT_HEIGHT" \
+        -S integer \
+        -F nearest \
+        -- \
+        "$FLYCAST" "$ROM"
 EOF
 
 chmod +x "$FLYCAST_LAUNCHER"
@@ -2890,6 +2977,24 @@ if [[ -x "$FLYCAST_EXE" ]]; then
     echo "  $FLYCAST_EXE"
 else
     die "Flycast installation verification failed."
+fi
+
+if [[ -x "$FLYCAST_LAUNCHER" ]]; then
+    echo "  BareFront wrapper: OK"
+else
+    die "Flycast BareFront wrapper is missing."
+fi
+
+if [[ -x "$FLYCAST_GAMESCOPE" ]]; then
+    echo "  Gamescope: OK"
+else
+    die "Gamescope is required for Dreamcast presentation."
+fi
+
+if [[ -f "$FLYCAST_OVERLAY" ]]; then
+    echo "  Dreamcast presentation overlay: OK"
+else
+    die "Dreamcast presentation overlay is missing."
 fi
 
 if [[ -L "$FLYCAST_BOOT_LINK" ]]; then

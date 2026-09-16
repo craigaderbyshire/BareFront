@@ -69,7 +69,7 @@ arguments={rom}
 [dreamcast]
 roms=roms/dreamcast
 screenshots=assets/games/dreamcast
-emulator=emulators/flycast/Flycast.AppImage
+emulator=emulators/flycast/launch_flycast.sh
 arguments={rom}
 
 [saturn]
