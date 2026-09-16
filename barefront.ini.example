@@ -27,8 +27,8 @@ arguments={rom}
 [ps1]
 roms=roms/ps1
 screenshots=assets/games/ps1
-emulator=emulators/duckstation/DuckStation.AppImage
-arguments=-batch -- {rom}
+emulator=scripts/launch_duckstation.sh
+arguments={rom}
 
 [ps2]
 roms=roms/ps2

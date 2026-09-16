@@ -1420,6 +1420,9 @@ heading "STAGE 3B / DUCKSTATION"
 DUCKSTATION_DIR="$BAREFRONT_DIR/emulators/duckstation"
 DUCKSTATION_EXE="$DUCKSTATION_DIR/DuckStation.AppImage"
 DUCKSTATION_SETTINGS="$DUCKSTATION_DIR/settings.ini"
+DUCKSTATION_GAMESCOPE="/usr/games/gamescope"
+DUCKSTATION_WRAPPER="$BAREFRONT_DIR/scripts/launch_duckstation.sh"
+DUCKSTATION_OVERLAY="$BAREFRONT_DIR/assets/overlays/ps1.png"
 
 # BareFront deliberately pins DuckStation to a known-good build.
 #
@@ -1441,6 +1444,18 @@ echo "  $DUCKSTATION_DIR"
 echo
 
 mkdir -p "$DUCKSTATION_DIR"
+
+if [[ ! -x "$DUCKSTATION_GAMESCOPE" ]]; then
+    die "Gamescope executable not found: $DUCKSTATION_GAMESCOPE"
+fi
+
+if [[ ! -x "$DUCKSTATION_WRAPPER" ]]; then
+    die "DuckStation BareFront wrapper is missing or not executable."
+fi
+
+if [[ ! -s "$DUCKSTATION_OVERLAY" ]]; then
+    die "Tracked PlayStation overlay missing: $DUCKSTATION_OVERLAY"
+fi
 
 # ------------------------------------------------------------
 # Install / verify the pinned DuckStation build
@@ -1608,6 +1623,23 @@ LoadSelectedSaveState = Keyboard/F1
 SaveSelectedSaveState = Keyboard/F2
 SelectPreviousSaveStateSlot = Keyboard/F3
 SelectNextSaveStateSlot = Keyboard/F4
+
+[GPU]
+ResolutionScale = 1
+Multisamples = 1
+TextureFilter = Nearest
+SpriteTextureFilter = Nearest
+DownsampleMode = Disabled
+WidescreenHack = false
+ChromaSmoothing24Bit = false
+DitheringMode = Unscaled
+PGXPEnable = false
+
+[Display]
+Scaling = Nearest
+Scaling24Bit = Nearest
+AspectRatio = Auto
+CropMode = None
 EOF
 
     echo
@@ -1705,6 +1737,9 @@ fi
 echo "  Executable: OK"
 echo "  Version:    $DUCKSTATION_VERSION"
 echo "  SHA-256:    OK"
+echo "  Gamescope:  OK"
+echo "  BareFront launcher: OK"
+echo "  Presentation overlay: OK"
 
 if [[ -f "$DUCKSTATION_DIR/portable.txt" ]]; then
     echo "  Portable mode marker: OK"
@@ -4773,8 +4808,8 @@ arguments={rom}
 [ps1]
 roms=roms/ps1
 screenshots=assets/games/ps1
-emulator=$DUCKSTATION_EXE
-arguments=-batch -- {rom}
+emulator=$DUCKSTATION_WRAPPER
+arguments={rom}
 
 [ps2]
 roms=roms/ps2
