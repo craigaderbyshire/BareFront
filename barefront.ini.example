@@ -87,7 +87,7 @@ arguments={rom}
 [jaguar]
 roms=roms/jaguar
 screenshots=assets/games/jaguar
-emulator=emulators/bigpemu/bigpemu/bigpemu
+emulator=scripts/launch_bigpemu.sh
 arguments={rom}
 
 [gamecube]

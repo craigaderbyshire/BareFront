@@ -2923,6 +2923,8 @@ BIGPEMU_LAUNCHER="$BIGPEMU_DIR/BigPEmu"
 BIGPEMU_WRAPPER="$BAREFRONT_DIR/scripts/launch_bigpemu.sh"
 BIGPEMU_ESC_SOURCE="$BAREFRONT_DIR/src/bigpemu_esc_helper.cpp"
 BIGPEMU_ESC_HELPER="$BIGPEMU_DIR/bigpemu_esc_helper"
+BIGPEMU_GAMESCOPE="/usr/games/gamescope"
+BIGPEMU_OVERLAY="$BAREFRONT_DIR/assets/overlays/jaguar.png"
 
 # BigPEmu does not currently publish releases through a package
 # manager or machine-readable release API.
@@ -3175,8 +3177,10 @@ fi
 # BareFront Jaguar integration
 #
 # BigPEmu reserves Esc for its own menu. BareFront therefore
-# owns Esc externally while BigPEmu is running. A tiny X11
-# helper grabs Esc and terminates only the BigPEmu process.
+# owns Esc externally while BigPEmu is running inside Gamescope.
+# The wrapper discovers BigPEmu's nested Xwayland DISPLAY and
+# starts the existing X11 Esc helper on that display. The helper
+# terminates only BigPEmu; Gamescope then exits naturally.
 # ------------------------------------------------------------
 
 echo
@@ -3188,6 +3192,14 @@ fi
 
 if [[ ! -x "$BIGPEMU_WRAPPER" ]]; then
     die "BigPEmu BareFront wrapper is missing or not executable."
+fi
+
+if [[ ! -x "$BIGPEMU_GAMESCOPE" ]]; then
+    die "Gamescope is required for Atari Jaguar presentation."
+fi
+
+if [[ ! -f "$BIGPEMU_OVERLAY" ]]; then
+    die "Atari Jaguar presentation overlay is missing."
 fi
 
 if [[ ! -x "$BIGPEMU_ESC_HELPER" ]] || \
