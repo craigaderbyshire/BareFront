@@ -3199,15 +3199,25 @@ echo "BigPEmu stage complete."
 heading "STAGE 3B / DOLPHIN"
 
 DOLPHIN_EXE="/usr/games/dolphin-emu"
+DOLPHIN_GAMESCOPE="/usr/games/gamescope"
 DOLPHIN_WRAPPER="$BAREFRONT_DIR/scripts/launch_dolphin.sh"
 DOLPHIN_USER_DIR="$BAREFRONT_DIR/saves/gamecube/dolphin"
+DOLPHIN_OVERLAY="$BAREFRONT_DIR/assets/overlays/gamecube.png"
 
 if [[ ! -x "$DOLPHIN_EXE" ]]; then
     die "Dolphin executable not found: $DOLPHIN_EXE"
 fi
 
+if [[ ! -x "$DOLPHIN_GAMESCOPE" ]]; then
+    die "Gamescope executable not found: $DOLPHIN_GAMESCOPE"
+fi
+
 if [[ ! -x "$DOLPHIN_WRAPPER" ]]; then
     die "Dolphin BareFront wrapper is missing or not executable."
+fi
+
+if [[ ! -s "$DOLPHIN_OVERLAY" ]]; then
+    die "Tracked GameCube overlay missing: $DOLPHIN_OVERLAY"
 fi
 
 mkdir -p \
@@ -3233,6 +3243,13 @@ for REGION in EUR USA JAP; do
     fi
 done
 
+echo "Verifying Dolphin integration..."
+echo "  System executable: OK"
+echo "  Gamescope: OK"
+echo "  BareFront launcher: OK"
+echo "  Presentation overlay: OK"
+echo "  IPL links: OK"
+echo
 echo "Dolphin integration stage complete."
 
 
