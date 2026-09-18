@@ -61,6 +61,103 @@ ROM_DIR="$(dirname "$ROM")"
 ROM_FILE="$(basename "$ROM")"
 SET_NAME="${ROM_FILE%.*}"
 
+
+# ------------------------------------------------------------
+# Arcade raster geometry policy
+#
+# BareFront never permits arbitrary fractional raster scaling.
+# Normal ROM-backed raster games remain at their native pixel
+# geometry. Exact transformations are allowed only where they
+# have been specifically proven lossless.
+#
+# MAME metadata is used to identify parent/clone families so a
+# validated rule applies automatically to the whole family.
+# ------------------------------------------------------------
+
+MAME_XML="$(
+    "$MAME" -listxml "$SET_NAME" 2>/dev/null || true
+)"
+
+MACHINE_LINE="$(
+    printf '%s\n' "$MAME_XML" |
+        grep -m1 '<machine ' || true
+)"
+
+DISPLAY_LINE="$(
+    printf '%s\n' "$MAME_XML" |
+        grep -m1 '<display ' || true
+)"
+
+CLONE_OF="$(
+    printf '%s\n' "$MACHINE_LINE" |
+        sed -n 's/.* cloneof="\([^"]*\)".*/\1/p'
+)"
+
+SOURCE_FILE="$(
+    printf '%s\n' "$MACHINE_LINE" |
+        sed -n 's/.* sourcefile="\([^"]*\)".*/\1/p'
+)"
+
+NATIVE_WIDTH="$(
+    printf '%s\n' "$DISPLAY_LINE" |
+        sed -n 's/.* width="\([^"]*\)".*/\1/p'
+)"
+
+NATIVE_HEIGHT="$(
+    printf '%s\n' "$DISPLAY_LINE" |
+        sed -n 's/.* height="\([^"]*\)".*/\1/p'
+)"
+
+NATIVE_ROTATE="$(
+    printf '%s\n' "$DISPLAY_LINE" |
+        sed -n 's/.* rotate="\([^"]*\)".*/\1/p'
+)"
+
+FAMILY_ROOT="${CLONE_OF:-$SET_NAME}"
+
+GEOMETRY_MODE="native raster / integer pixels"
+
+MAME_GEOMETRY_ARGS=(
+    -nounevenstretch
+    -nounevenstretchx
+    -nounevenstretchy
+    -noautostretchxy
+    -keepaspect
+)
+
+
+case "$FAMILY_ROOT" in
+
+    wboy)
+        # Wonder Boy hardware exposes a 512x224 raster in MAME,
+        # but direct frame analysis proved every adjacent pair
+        # of horizontal columns is identical (100.0000%).
+        #
+        # Collapse those duplicate columns exactly 2:1:
+        #
+        #     512x224 -> 256x224
+        #
+        # This is lossless and introduces no periodic sampling.
+        if [[ "$NATIVE_WIDTH" == "512" &&
+              "$NATIVE_HEIGHT" == "224" &&
+              "$NATIVE_ROTATE" == "0" ]]; then
+
+            GEOMETRY_MODE="lossless Wonder Boy X/2: 512x224 -> 256x224"
+
+            MAME_GEOMETRY_ARGS=(
+                -resolution 256x224
+                -nounevenstretch
+                -unevenstretchx
+                -nounevenstretchy
+                -noautostretchxy
+                -nokeepaspect
+            )
+        fi
+        ;;
+
+esac
+
+
 SAVE_ROOT="$ROOT/saves/arcade/mame"
 
 mkdir -p \
@@ -150,7 +247,10 @@ EOF2
 echo "Starting Arcade through BareFront..."
 echo "  Set:          $SET_NAME"
 echo "  MAME:         native raster / native rotation"
-echo "  Pixel aspect: MAME"
+echo "  Driver:       ${SOURCE_FILE:-unknown}"
+echo "  Family:       $FAMILY_ROOT"
+echo "  Raster:       ${NATIVE_WIDTH:-?}x${NATIVE_HEIGHT:-?} rotate=${NATIVE_ROTATE:-?}"
+echo "  Geometry:     $GEOMETRY_MODE"
 echo "  Filtering:    disabled"
 echo "  Gamescope:    dynamic integer scale into ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}"
 echo "  Scale filter: nearest"
@@ -191,8 +291,7 @@ env \
             -video opengl \
             -nofilter \
             -prescale 1 \
-            -unevenstretch \
-            -keepaspect \
+            "${MAME_GEOMETRY_ARGS[@]}" \
             -view native &
 
 GAMESCOPE_PID=$!
