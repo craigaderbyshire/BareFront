@@ -1,3 +1,4 @@
+#include <X11/Xatom.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 
@@ -5,6 +6,73 @@
 #include <iostream>
 #include <string>
 #include <vector>
+
+static bool isDockWindow(
+    Display* display,
+    Window window)
+{
+    const Atom typeProperty =
+        XInternAtom(
+            display,
+            "_NET_WM_WINDOW_TYPE",
+            False
+        );
+
+    const Atom dockType =
+        XInternAtom(
+            display,
+            "_NET_WM_WINDOW_TYPE_DOCK",
+            False
+        );
+
+    Atom actualType {};
+    int actualFormat = 0;
+    unsigned long itemCount = 0;
+    unsigned long bytesAfter = 0;
+    unsigned char* data = nullptr;
+
+    const int result =
+        XGetWindowProperty(
+            display,
+            window,
+            typeProperty,
+            0,
+            32,
+            False,
+            XA_ATOM,
+            &actualType,
+            &actualFormat,
+            &itemCount,
+            &bytesAfter,
+            &data
+        );
+
+    bool isDock = false;
+
+    if (result == Success &&
+        actualType == XA_ATOM &&
+        actualFormat == 32 &&
+        data)
+    {
+        const Atom* atoms =
+            reinterpret_cast<const Atom*>(data);
+
+        for (unsigned long i = 0; i < itemCount; ++i)
+        {
+            if (atoms[i] == dockType)
+            {
+                isDock = true;
+                break;
+            }
+        }
+    }
+
+    if (data)
+        XFree(data);
+
+    return isDock;
+}
+
 
 static void findPanelWindows(
     Display* display,
@@ -45,8 +113,14 @@ static void findPanelWindows(
             if (hint.res_class)
                 XFree(hint.res_class);
 
-            if (isPanel)
+            if (isPanel &&
+                isDockWindow(
+                    display,
+                    children[i]
+                ))
+            {
                 panels.push_back(children[i]);
+            }
         }
 
         findPanelWindows(

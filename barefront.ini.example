@@ -57,7 +57,7 @@ arguments={rom}
 [arcade]
 roms=roms/arcade
 screenshots=assets/games/arcade
-emulator=scripts/launch_mame.sh
+emulator=scripts/launch_mame_arcade.sh
 arguments={rom}
 
 [neogeo]

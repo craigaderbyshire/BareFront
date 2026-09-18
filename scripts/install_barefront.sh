@@ -4911,6 +4911,7 @@ VICE_PRESENTATION_HELPER="$BAREFRONT_DIR/c64_presentation_helper"
 VICE_BEZEL="$BAREFRONT_DIR/assets/bezels/c64.png"
 VICE_BEZEL_SHADER="$BAREFRONT_DIR/assets/shaders/c64/BareFront_C64_Bezel.fx"
 MAME_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mame.sh"
+MAME_ARCADE_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mame_arcade.sh"
 
 mkdir -p "$BAREFRONT_DIR/scripts"
 mkdir -p "$VICE_HOTKEY_DIR"
@@ -5478,7 +5479,42 @@ fi
 # ------------------------------------------------------------
 
 echo
-echo "Creating/verifying Arcade / Neo Geo MAME launcher..."
+echo "Verifying tracked Arcade MAME presentation launcher..."
+
+if [[ ! -f "$MAME_ARCADE_LAUNCHER" ]]; then
+    die "Tracked Arcade MAME launcher missing: $MAME_ARCADE_LAUNCHER"
+fi
+
+chmod +x "$MAME_ARCADE_LAUNCHER"
+
+if ! bash -n "$MAME_ARCADE_LAUNCHER"; then
+    die "Arcade MAME launcher shell syntax verification failed."
+fi
+
+if [[ ! -x "$MAME_ARCADE_LAUNCHER" ]]; then
+    die "Arcade MAME launcher is not executable."
+fi
+
+if [[ ! -x "/usr/games/gamescope" ]]; then
+    die "Arcade presentation requires Gamescope."
+fi
+
+if [[ ! -f "$BAREFRONT_DIR/assets/shaders/barecrt/BareCRT.fx" ]]; then
+    die "Arcade presentation requires the shared BareCRT shader."
+fi
+
+if [[ ! -x "$VICE_PRESENTATION_HELPER" ]]; then
+    die "Arcade presentation requires the X11 presentation helper."
+fi
+
+echo "  Arcade launcher: OK"
+echo "  $MAME_ARCADE_LAUNCHER"
+echo "  Gamescope: OK"
+echo "  BareCRT: OK"
+echo "  Presentation helper: OK"
+
+echo
+echo "Creating/verifying shared MAME launcher for Neo Geo..."
 
 cat > "$MAME_LAUNCHER" <<'EOF'
 #!/bin/bash
@@ -5623,7 +5659,7 @@ arguments={rom}
 [arcade]
 roms=roms/arcade
 screenshots=assets/games/arcade
-emulator=$MAME_LAUNCHER
+emulator=$MAME_ARCADE_LAUNCHER
 arguments={rom}
 
 [neogeo]
@@ -6826,7 +6862,7 @@ echo "  Amiberry official Debian-package installation / integration"
 echo "  PC Engine Mednafen launcher / isolated profile"
 echo "  Saturn Mednafen launcher / isolated profile"
 echo "  VICE BareFront launcher adapter"
-echo "  MAME Arcade / Neo Geo launcher adapter"
+echo "  MAME Arcade presentation / Neo Geo launcher adapters"
 echo "  Production barefront.ini generation / validation"
 echo "  Firmware readiness checker framework"
 echo
