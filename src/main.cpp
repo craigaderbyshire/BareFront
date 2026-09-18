@@ -3637,7 +3637,7 @@ int main()
             "assets/systems/c64.png",
             "testroms/c64",
             "assets/games/c64",
-            { ".d64", ".t64", ".prg", ".crt", ".zip" }
+            { ".d64", ".t64", ".prg", ".crt", ".vfl", ".zip" }
         },
 
 

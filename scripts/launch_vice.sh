@@ -1,21 +1,452 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROM="${1:-}"
 
+VICE="/usr/bin/x64sc"
+GAMESCOPE="/usr/games/gamescope"
+PRESENTATION_HELPER="$ROOT/c64_presentation_helper"
+
+NATIVE_WIDTH=408
+NATIVE_HEIGHT=293
+
+OUTPUT_WIDTH=1920
+OUTPUT_HEIGHT=1080
+
+C64_PAL_MODE="1920x1080_C64PAL"
+
+BEZEL="$ROOT/assets/bezels/c64.png"
+BEZEL_SHADER="$ROOT/assets/shaders/c64/BareFront_C64_Bezel.fx"
+BARECRT_SHADER="$ROOT/assets/shaders/barecrt/BareCRT.fx"
+
+VKBASALT_CONFIG="/tmp/barefront-vkbasalt-c64.conf"
+
+GAMESCOPE_PID=""
+PANELS_HIDDEN=0
+
+DISPLAY_OUTPUT=""
+ORIGINAL_MODE=""
+ORIGINAL_RATE=""
+
+
 if [[ -z "$ROM" ]]; then
     echo "Usage: launch_vice.sh <game-file>" >&2
     exit 1
 fi
 
-exec /usr/bin/x64sc \
-    -hotkeyfile "$ROOT/emulators/vice/barefront.vhk" \
-    +confirmonexit \
-    -basic "$ROOT/bios/c64/basic-901226-01.bin" \
-    -kernal "$ROOT/bios/c64/kernal-901227-03.bin" \
-    -chargen "$ROOT/bios/c64/chargen-901225-01.bin" \
-    -dos1541 "$ROOT/bios/c64/dos1541-325302-01+901229-05.bin" \
-    -drive8type 1541 \
-    -autostart "$ROM"
+
+# BareFront normally supplies a path relative to its root.
+# Convert it to an absolute path so VICE fliplist entries can
+# be resolved reliably regardless of the caller's directory.
+if [[ "$ROM" != /* ]]; then
+    ROM="$ROOT/${ROM#./}"
+fi
+
+
+if [[ ! -f "$ROM" ]]; then
+    echo "C64 game not found:" >&2
+    echo "  $ROM" >&2
+    exit 1
+fi
+
+
+
+for required in \
+    "$VICE" \
+    "$GAMESCOPE" \
+    "$PRESENTATION_HELPER"
+do
+    if [[ ! -x "$required" ]]; then
+        echo "Required C64 executable not found:" >&2
+        echo "  $required" >&2
+        exit 1
+    fi
+done
+
+
+for required in \
+    "$ROOT/bios/c64/basic-901226-01.bin" \
+    "$ROOT/bios/c64/kernal-901227-03.bin" \
+    "$ROOT/bios/c64/chargen-901225-01.bin" \
+    "$ROOT/bios/c64/dos1541-325302-01+901229-05.bin" \
+    "$BARECRT_SHADER" \
+    "$BEZEL_SHADER" \
+    "$BEZEL"
+do
+    if [[ ! -f "$required" ]]; then
+        echo "Required C64 file not found:" >&2
+        echo "  $required" >&2
+        exit 1
+    fi
+done
+
+
+export DISPLAY="${DISPLAY:-:0}"
+
+if [[ -z "${XAUTHORITY:-}" &&
+      -f "$HOME/.Xauthority" ]]
+then
+    export XAUTHORITY="$HOME/.Xauthority"
+fi
+
+if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
+    export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+fi
+
+
+# ------------------------------------------------------------
+# Capture the current physical display state.
+#
+# The original mode/rate is restored when VICE exits.
+# ------------------------------------------------------------
+
+XRANDR_STATE="$(xrandr --query)"
+
+DISPLAY_OUTPUT="$(
+    awk '
+        $2 == "connected" {
+            output = $1
+        }
+
+        /\*/ {
+            print output
+            exit
+        }
+    ' <<< "$XRANDR_STATE"
+)"
+
+ORIGINAL_MODE="$(
+    awk '
+        /\*/ {
+            print $1
+            exit
+        }
+    ' <<< "$XRANDR_STATE"
+)"
+
+ORIGINAL_RATE="$(
+    awk '
+        /\*/ {
+            for (i = 2; i <= NF; ++i) {
+                if ($i ~ /\*/) {
+                    gsub(/[\*\+]/, "", $i)
+                    print $i
+                    exit
+                }
+            }
+        }
+    ' <<< "$XRANDR_STATE"
+)"
+
+
+if [[ -z "$DISPLAY_OUTPUT" ||
+      -z "$ORIGINAL_MODE" ||
+      -z "$ORIGINAL_RATE" ]]
+then
+    echo "Unable to determine the active X11 display mode." >&2
+    exit 1
+fi
+
+
+cleanup()
+{
+    local exit_code=$?
+
+    trap - EXIT INT TERM
+
+    if [[ -n "$GAMESCOPE_PID" ]]; then
+        kill "$GAMESCOPE_PID" \
+            >/dev/null 2>&1 || true
+
+        wait "$GAMESCOPE_PID" \
+            >/dev/null 2>&1 || true
+    fi
+
+    echo
+    echo "Restoring display:"
+    echo "  Output: $DISPLAY_OUTPUT"
+    echo "  Mode:   $ORIGINAL_MODE"
+    echo "  Rate:   $ORIGINAL_RATE"
+
+    xrandr \
+        --output "$DISPLAY_OUTPUT" \
+        --mode "$ORIGINAL_MODE" \
+        --rate "$ORIGINAL_RATE" \
+        >/dev/null 2>&1 || true
+
+    if [[ "$PANELS_HIDDEN" == "1" ]]; then
+        "$PRESENTATION_HELPER" show-panels \
+            >/dev/null 2>&1 || true
+    fi
+
+
+    exit "$exit_code"
+}
+
+trap cleanup EXIT INT TERM
+
+
+
+# ------------------------------------------------------------
+# Determine whether this output advertises 1080p50.
+#
+# BareFront only attempts the PAL-matched custom mode on a
+# display which already reports 1920x1080 at approximately
+# 50 Hz. Otherwise the existing display mode is retained.
+# ------------------------------------------------------------
+
+SUPPORTS_1080P50="$(
+    awk -v target="$DISPLAY_OUTPUT" '
+        $1 == target && $2 == "connected" {
+            inside = 1
+            next
+        }
+
+        inside && /^[^[:space:]]/ {
+            inside = 0
+        }
+
+        inside && $1 == "1920x1080" {
+            for (i = 2; i <= NF; ++i) {
+                rate = $i
+                gsub(/[\*\+]/, "", rate)
+
+                if (rate ~ /^50(\.0+)?$/) {
+                    print "yes"
+                    exit
+                }
+            }
+        }
+    ' <<< "$XRANDR_STATE"
+)"
+
+
+echo "Starting Commodore 64 through BareFront..."
+echo "  VICE:        PAL"
+echo "  Surface:     ${NATIVE_WIDTH}x${NATIVE_HEIGHT}"
+echo "  Gamescope:   ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}"
+echo "  Scaling:     integer / nearest"
+echo "  Borders:     full"
+echo "  CRT:         BareCRT"
+echo "  Bezel:       black"
+
+
+# ------------------------------------------------------------
+# Release XFCE's panel work area BEFORE Gamescope is created.
+#
+# This allows the borderless 1920x1080 Gamescope window to be
+# placed at the real desktop origin instead of y=27.
+# ------------------------------------------------------------
+
+"$PRESENTATION_HELPER" hide-panels
+PANELS_HIDDEN=1
+
+sleep 1
+
+
+# ------------------------------------------------------------
+# PAL display timing.
+#
+# A real PAL C64 runs at approximately 50.12 Hz. The M7 display
+# accepts this custom 1080p mode and it removes the periodic
+# cadence judder visible at ordinary 50.000 Hz.
+#
+# If the display cannot use it, fall back to its advertised
+# 1080p50 mode. If even that fails, retain the original mode.
+# ------------------------------------------------------------
+
+if [[ "$SUPPORTS_1080P50" == "yes" ]]; then
+
+    xrandr --newmode \
+        "$C64_PAL_MODE" \
+        148.87 \
+        1920 2448 2492 2640 \
+        1080 1084 1089 1125 \
+        +HSync +VSync \
+        >/dev/null 2>&1 || true
+
+    xrandr --addmode \
+        "$DISPLAY_OUTPUT" \
+        "$C64_PAL_MODE" \
+        >/dev/null 2>&1 || true
+
+    if xrandr \
+        --output "$DISPLAY_OUTPUT" \
+        --mode "$C64_PAL_MODE"
+    then
+        echo "  Display:     PAL matched ~50.12 Hz"
+    elif xrandr \
+        --output "$DISPLAY_OUTPUT" \
+        --mode 1920x1080 \
+        --rate 50.00
+    then
+        echo "  Display:     50.00 Hz fallback"
+    else
+        echo "  Display:     original mode retained"
+    fi
+
+else
+    echo "  Display:     no advertised 1080p50; original mode retained"
+fi
+
+# Give the physical display and X11 stack time to settle on the
+# new refresh timing before Gamescope establishes its pacing.
+sleep 3
+
+
+# ------------------------------------------------------------
+# vkBasalt / ReShade presentation.
+#
+# BareCRT runs first. The C64 bezel is then composited inside
+# the same shader path, avoiding the separate X11 overlay
+# window which caused visible scrolling judder.
+# ------------------------------------------------------------
+
+cat > "$VKBASALT_CONFIG" <<EOF2
+effects = barecrt:c64bezel
+
+barecrt = $BARECRT_SHADER
+c64bezel = $BEZEL_SHADER
+
+reshadeIncludePath = $ROOT/assets/shaders/barecrt
+reshadeTexturePath = $ROOT/assets/bezels
+
+enableOnLaunch = True
+toggleKey = F8
+EOF2
+
+
+VICE_ARGS=(
+    -hotkeyfile "$ROOT/emulators/vice/barefront.vhk"
+    +confirmonexit
+
+    -pal
+
+    -VICIIborders 1
+    -VICIIfilter 0
+    -VICIIglfilter 0
+    -VICIIaspectmode 0
+
+    -VICIIfull
+    +fullscreen-decorations
+    +VICIIshowstatusbar
+
+    +VICIIdsize
+    +VICIIdscan
+    +VICIIvsync
+
+    -basic "$ROOT/bios/c64/basic-901226-01.bin"
+    -kernal "$ROOT/bios/c64/kernal-901227-03.bin"
+    -chargen "$ROOT/bios/c64/chargen-901225-01.bin"
+    -dos1541 "$ROOT/bios/c64/dos1541-325302-01+901229-05.bin"
+
+    -drive8type 1541
+)
+
+
+# ------------------------------------------------------------
+# Native VICE multi-disk support.
+#
+# A .vfl file is presented to BareFront as one game. The first
+# non-comment entry is autostarted and VICE receives the whole
+# fliplist so its normal disk-next / disk-previous controls
+# remain available.
+# ------------------------------------------------------------
+
+ROM_EXTENSION="${ROM##*.}"
+ROM_EXTENSION="${ROM_EXTENSION,,}"
+
+if [[ "$ROM_EXTENSION" == "vfl" ]]; then
+
+    FIRST_DISK="$(
+        awk '
+            {
+                line = $0
+                sub(/\r$/, "", line)
+                sub(/^[[:space:]]+/, "", line)
+                sub(/[[:space:]]+$/, "", line)
+
+                if (line != "" &&
+                    substr(line, 1, 1) != ";")
+                {
+                    print line
+                    exit
+                }
+            }
+        ' "$ROM"
+    )"
+
+    if [[ -z "$FIRST_DISK" ]]; then
+        echo "VICE fliplist contains no disk images:" >&2
+        echo "  $ROM" >&2
+        exit 1
+    fi
+
+    if [[ "$FIRST_DISK" == /* ]]; then
+        AUTOSTART_DISK="$FIRST_DISK"
+    else
+        AUTOSTART_DISK="$(dirname "$ROM")/$FIRST_DISK"
+    fi
+
+    if [[ ! -f "$AUTOSTART_DISK" ]]; then
+        echo "First VICE fliplist disk not found:" >&2
+        echo "  $AUTOSTART_DISK" >&2
+        exit 1
+    fi
+
+    echo "  Fliplist:    $(basename "$ROM")"
+    echo "  First disk:  $(basename "$AUTOSTART_DISK")"
+
+    VICE_ARGS+=(
+        -flipname "$ROM"
+        -autostart "$AUTOSTART_DISK"
+    )
+
+else
+
+    VICE_ARGS+=(
+        -autostart "$ROM"
+    )
+
+fi
+
+
+env \
+    ENABLE_VKBASALT=1 \
+    VKBASALT_CONFIG_FILE="$VKBASALT_CONFIG" \
+    "$GAMESCOPE" \
+        -b \
+        -g \
+        -r 50.12 \
+        -w "$NATIVE_WIDTH" \
+        -h "$NATIVE_HEIGHT" \
+        -W "$OUTPUT_WIDTH" \
+        -H "$OUTPUT_HEIGHT" \
+        -S integer \
+        -F nearest \
+        -- \
+        "$VICE" \
+        "${VICE_ARGS[@]}" &
+
+GAMESCOPE_PID=$!
+
+
+# Gamescope exists as a normal borderless X11 window. Apply an
+# invisible cursor once, then leave no resident X11 helper
+# running during gameplay.
+sleep 3
+
+"$PRESENTATION_HELPER" hide-cursor || true
+
+
+if wait "$GAMESCOPE_PID"; then
+    GAME_EXIT=0
+else
+    GAME_EXIT=$?
+fi
+
+GAMESCOPE_PID=""
+
+exit "$GAME_EXIT"

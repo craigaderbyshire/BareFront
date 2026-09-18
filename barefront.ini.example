@@ -51,8 +51,8 @@ arguments={rom}
 [c64]
 roms=roms/c64
 screenshots=assets/games/c64
-emulator=/usr/bin/x64sc
-arguments=-basic bios/c64/basic-901226-01.bin -kernal bios/c64/kernal-901227-03.bin -chargen bios/c64/chargen-901225-01.bin -dos1541 bios/c64/dos1541-325302-01+901229-05.bin -drive8type 1541 -autostart {rom}
+emulator=scripts/launch_vice.sh
+arguments={rom}
 
 [arcade]
 roms=roms/arcade

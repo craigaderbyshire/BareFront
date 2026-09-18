@@ -20,6 +20,7 @@ assets/videos/
 /barefront
 /capture_helper
 /overlay_helper
+/c64_presentation_helper
 
 # Machine-specific live configuration
 barefront.ini
