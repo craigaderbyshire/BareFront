@@ -1773,6 +1773,9 @@ heading "STAGE 3B / PCSX2"
 PCSX2_DIR="$BAREFRONT_DIR/emulators/pcsx2"
 PCSX2_EXE="$PCSX2_DIR/PCSX2.AppImage"
 PCSX2_LAUNCHER="$PCSX2_DIR/launch_pcsx2.sh"
+PCSX2_GAMESCOPE="/usr/games/gamescope"
+PCSX2_BARECRT="$BAREFRONT_DIR/assets/shaders/barecrt/BareCRT.fx"
+PCSX2_OVERLAY="$BAREFRONT_DIR/assets/overlays/ps2.png"
 
 # BareFront deliberately pins PCSX2 to a known build.
 #
@@ -2013,7 +2016,9 @@ ensure_symlink \
 # and hotkey mappings. BareFront then changes only the small
 # appliance-facing settings it deliberately owns.
 #
-# Existing PCSX2.ini files are never rewritten by the installer.
+# Existing profiles retain their user-managed settings.
+# BareFront-owned appliance/presentation values are normalised
+# idempotently below after the profile exists.
 if [[ ! -f "$PCSX2_INI" ]]; then
 
     echo
@@ -2133,10 +2138,106 @@ else
 
     echo
     echo "Existing PCSX2 configuration found."
-    echo "Leaving user configuration untouched:"
+    echo "Preserving user-managed PCSX2 settings:"
     echo "  $PCSX2_INI"
 
 fi
+
+
+# ------------------------------------------------------------
+# BareFront-owned PCSX2 appliance / presentation settings
+# ------------------------------------------------------------
+#
+# These values are part of BareFront's PS2 contract rather than
+# user preference:
+#
+# - emulator renders at native 1x
+# - no emulator-side final smoothing / enhancement
+# - original 4:3/3:2 aspect behaviour retained
+# - PCSX2 handles deinterlacing automatically per title
+# - Escape exits directly to BareFront
+# - Gamescope owns final integer scaling
+#
+# Apply these on every installer run while leaving controller,
+# memory-card, game-fix and other user-managed settings untouched.
+
+python3 - "$PCSX2_INI" <<'PYCONFIG_OWNED'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+lines = path.read_text().splitlines()
+
+
+def set_value(section, key, value):
+    header = f"[{section}]"
+
+    try:
+        section_start = lines.index(header)
+    except ValueError:
+        if lines and lines[-1] != "":
+            lines.append("")
+
+        lines.extend([
+            header,
+            f"{key} = {value}",
+            "",
+        ])
+        return
+
+    section_end = len(lines)
+
+    for i in range(section_start + 1, len(lines)):
+        if lines[i].startswith("[") and lines[i].endswith("]"):
+            section_end = i
+            break
+
+    for i in range(section_start + 1, section_end):
+        stripped = lines[i].lstrip()
+
+        if stripped.startswith(f"{key} =") or stripped.startswith(f"{key}="):
+            lines[i] = f"{key} = {value}"
+            return
+
+    lines.insert(section_end, f"{key} = {value}")
+
+
+# BareFront appliance behaviour.
+set_value("UI", "SetupWizardIncomplete", "false")
+set_value("UI", "ConfirmShutdown", "false")
+
+set_value("AutoUpdater", "CheckAtStartup", "false")
+
+set_value("Hotkeys", "OpenPauseMenu", "")
+set_value("Hotkeys", "ShutdownVM", "Keyboard/Escape")
+
+# The launcher chooses the matching BIOS immediately before launch.
+set_value("Filenames", "BIOS", "")
+
+# Neutral emulator-side presentation.
+set_value("EmuCore", "EnableWideScreenPatches", "false")
+set_value("EmuCore", "EnableNoInterlacingPatches", "false")
+
+set_value("EmuCore/GS", "AspectRatio", "Auto 4:3/3:2")
+set_value("EmuCore/GS", "IntegerScaling", "false")
+set_value("EmuCore/GS", "fxaa", "false")
+set_value("EmuCore/GS", "linear_present_mode", "0")
+set_value("EmuCore/GS", "deinterlace_mode", "0")
+set_value("EmuCore/GS", "upscale_multiplier", "1")
+set_value("EmuCore/GS", "TVShader", "0")
+
+path.write_text("\n".join(lines) + "\n")
+PYCONFIG_OWNED
+
+echo
+echo "BareFront PCSX2 presentation settings:"
+echo "  Internal resolution: 1x"
+echo "  Aspect:              Auto 4:3/3:2"
+echo "  Bilinear present:    disabled"
+echo "  Deinterlace:         automatic"
+echo "  Emulator FXAA:       disabled"
+echo "  Emulator TV shader:  disabled"
+echo "  Escape:              return to BareFront"
 
 
 # ------------------------------------------------------------
@@ -2159,6 +2260,18 @@ PCSX2_DATA_DIR="$SCRIPT_DIR/PCSX2"
 PCSX2_INI="$PCSX2_DATA_DIR/inis/PCSX2.ini"
 BIOS_DIR="$PCSX2_DATA_DIR/bios"
 
+GAMESCOPE="/usr/games/gamescope"
+BARECRT="$BAREFRONT_DIR/assets/shaders/barecrt/BareCRT.fx"
+
+NATIVE_WIDTH=640
+NATIVE_HEIGHT=480
+INTEGER_SCALE=2
+
+OUTPUT_WIDTH=$((NATIVE_WIDTH * INTEGER_SCALE))
+OUTPUT_HEIGHT=$((NATIVE_HEIGHT * INTEGER_SCALE))
+
+VKBASALT_CONFIG="/tmp/barefront-vkbasalt-ps2.conf"
+
 ROM="${1:-}"
 
 if [[ -z "$ROM" ]]; then
@@ -2175,6 +2288,18 @@ fi
 if [[ ! -x "$PCSX2_EXE" ]]; then
     echo "ERROR: PCSX2 executable not found:" >&2
     echo "  $PCSX2_EXE" >&2
+    exit 1
+fi
+
+if [[ ! -x "$GAMESCOPE" ]]; then
+    echo "ERROR: Gamescope executable not found:" >&2
+    echo "  $GAMESCOPE" >&2
+    exit 1
+fi
+
+if [[ ! -f "$BARECRT" ]]; then
+    echo "ERROR: BareCRT shader not found:" >&2
+    echo "  $BARECRT" >&2
     exit 1
 fi
 
@@ -2364,11 +2489,45 @@ ini.write_text("\n".join(lines) + "\n")
 PY
 
 
-exec "$PCSX2_EXE" \
-    -portable \
-    -batch \
-    -slowboot \
-    "$ROM"
+if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
+    export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+fi
+
+cat > "$VKBASALT_CONFIG" <<EOF
+effects = barecrt
+barecrt = $BARECRT
+reshadeIncludePath = $BAREFRONT_DIR/assets/shaders/barecrt
+reshadeTexturePath = $BAREFRONT_DIR/assets/shaders/barecrt
+enableOnLaunch = True
+toggleKey = F8
+EOF
+
+echo "Starting PlayStation 2 through per-game Gamescope..."
+echo "  Canvas:      ${NATIVE_WIDTH}x${NATIVE_HEIGHT}"
+echo "  Integer:     ${INTEGER_SCALE}x"
+echo "  Output:      ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}"
+echo "  Filter:      nearest"
+echo "  BareCRT:     enabled"
+
+exec env \
+    ENABLE_VKBASALT=1 \
+    VKBASALT_CONFIG_FILE="$VKBASALT_CONFIG" \
+    "$GAMESCOPE" \
+        -b \
+        -g \
+        -w "$NATIVE_WIDTH" \
+        -h "$NATIVE_HEIGHT" \
+        -W "$OUTPUT_WIDTH" \
+        -H "$OUTPUT_HEIGHT" \
+        -S integer \
+        -F nearest \
+        -- \
+        "$PCSX2_EXE" \
+            -portable \
+            -batch \
+            -slowboot \
+            -fullscreen \
+            "$ROM"
 BAREFRONT_PCSX2_LAUNCHER_EOF
 
 chmod +x "$PCSX2_LAUNCHER"
@@ -2397,6 +2556,30 @@ if [[ -x "$PCSX2_LAUNCHER" ]]; then
     echo "  $PCSX2_LAUNCHER"
 else
     die "PCSX2 mixed-region launcher verification failed."
+fi
+
+if ! bash -n "$PCSX2_LAUNCHER"; then
+    die "PCSX2 launcher shell syntax verification failed."
+fi
+
+echo "  Launcher syntax: OK"
+
+if [[ -x "$PCSX2_GAMESCOPE" ]]; then
+    echo "  Gamescope: OK"
+else
+    die "PCSX2 presentation requires Gamescope."
+fi
+
+if [[ -f "$PCSX2_BARECRT" ]]; then
+    echo "  BareCRT: OK"
+else
+    die "PCSX2 presentation requires the shared BareCRT shader."
+fi
+
+if [[ -f "$PCSX2_OVERLAY" ]]; then
+    echo "  PS2 overlay: OK"
+else
+    die "PCSX2 presentation overlay is missing."
 fi
 
 if [[ -d "$PCSX2_DATA_DIR" ]]; then
@@ -2437,7 +2620,13 @@ echo "The launcher:"
 echo "  - detects the game's region from its curated filename"
 echo "  - identifies installed PS2 BIOS images from ROMVER data"
 echo "  - selects a matching BIOS for each game"
-echo "  - starts PCSX2 with -portable -batch -slowboot"
+echo "  - starts PCSX2 with -portable -batch -slowboot -fullscreen"
+echo "  - presents a 640x480 canvas through Gamescope"
+echo "  - scales 2x nearest to 1280x960"
+echo "  - applies the shared external BareCRT shader"
+echo
+echo "BareFront's 1920x1080 PS2 overlay provides the black surround"
+echo "around the centred 1280x960 gameplay aperture."
 echo
 echo "This preserves the authentic PS2 BIOS/startup sequence"
 echo "while supporting mixed-region curated libraries."

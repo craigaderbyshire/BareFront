@@ -33,8 +33,8 @@ arguments={rom}
 [ps2]
 roms=roms/ps2
 screenshots=assets/games/ps2
-emulator=emulators/pcsx2/PCSX2.AppImage
-arguments=-batch {rom}
+emulator=emulators/pcsx2/launch_pcsx2.sh
+arguments={rom}
 
 [mastersystem]
 roms=roms/mastersystem
