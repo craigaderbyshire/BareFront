@@ -63,7 +63,7 @@ arguments={rom}
 [neogeo]
 roms=roms/neogeo
 screenshots=assets/games/neogeo
-emulator=scripts/launch_mame.sh
+emulator=scripts/launch_mame_neogeo.sh
 arguments={rom}
 
 [dreamcast]
