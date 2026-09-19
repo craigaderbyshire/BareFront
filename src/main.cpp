@@ -1849,12 +1849,21 @@ void launchGame(
         -1;
 
 
+    pid_t brandingOverlayHelperPid =
+        -1;
+
+
     const fs::path overlayHelper =
         "./overlay_helper";
 
 
     const fs::path overlayArtwork =
         fs::path("assets/overlays") /
+        (system.configSection + ".png");
+
+
+    const fs::path brandingOverlayArtwork =
+        fs::path("assets/overlays/branding") /
         (system.configSection + ".png");
 
 
@@ -1915,6 +1924,60 @@ void launchGame(
                 << "Overlay helper not found: "
                 << overlayHelper
                 << " (overlay disabled)\n";
+        }
+    }
+
+
+    // --------------------------------------------------
+    // Start the optional system branding layer.
+    //
+    // This is deliberately separate from the presentation
+    // bezel so the technically correct black surround remains
+    // untouched.  If no branding artwork exists for a system,
+    // presentation behaves exactly as before.
+    // --------------------------------------------------
+
+    if (
+        gamescopeActive &&
+        fs::exists(brandingOverlayArtwork)
+    )
+    {
+        if (fs::exists(overlayHelper))
+        {
+            brandingOverlayHelperPid =
+                fork();
+
+
+            if (brandingOverlayHelperPid == 0)
+            {
+                if (setpgid(0, 0) != 0)
+                {
+                    _exit(126);
+                }
+
+                execl(
+                    overlayHelper.c_str(),
+                    overlayHelper.c_str(),
+                    brandingOverlayArtwork.c_str(),
+                    static_cast<char*>(nullptr)
+                );
+
+                _exit(127);
+            }
+
+
+            if (brandingOverlayHelperPid < 0)
+            {
+                std::cerr
+                    << "Unable to start branding overlay helper\n";
+            }
+        }
+        else
+        {
+            std::cerr
+                << "Overlay helper not found: "
+                << overlayHelper
+                << " (branding overlay disabled)\n";
         }
     }
 
@@ -2159,8 +2222,24 @@ void launchGame(
     }
 
 
-    // Emulator has closed: remove the presentation overlay
-    // before BareFront becomes visible again.
+    // Emulator has closed: remove the optional branding layer
+    // first, then the presentation overlay, before BareFront
+    // becomes visible again.
+    if (brandingOverlayHelperPid > 0)
+    {
+        kill(
+            brandingOverlayHelperPid,
+            SIGTERM
+        );
+
+        waitpid(
+            brandingOverlayHelperPid,
+            nullptr,
+            0
+        );
+    }
+
+
     if (overlayHelperPid > 0)
     {
         kill(
