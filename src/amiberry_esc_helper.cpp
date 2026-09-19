@@ -179,7 +179,7 @@ int main(int argc, char* argv[])
 
             if (quitRequested) {
                 XCloseDisplay(display);
-                return 0;
+                return 10;
             }
         }
 

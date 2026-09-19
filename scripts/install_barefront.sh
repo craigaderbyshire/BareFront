@@ -4346,6 +4346,21 @@ cat > "$AMIBERRY_CONF" <<EOF
 # Emulator-specific settings can still be changed inside Amiberry.
 # These entries only make BareFront's filesystem layout predictable.
 
+# BareFront presentation policy.
+#
+# Amiberry is responsible only for native Amiga emulation.
+# Gamescope owns scaling/presentation and BareCRT is external.
+#
+# WHDLoad may still choose the correct emulated hardware for
+# each title, but its JSON database must not override display
+# presentation settings.
+allow_display_settings_from_json=no
+default_line_mode=0
+default_scaling_method=0
+default_gfx_autoresolution=1
+default_auto_crop=no
+default_correct_aspect_ratio=no
+
 config_path=$AMIBERRY_LOCAL_DIR/conf
 rom_path=$BAREFRONT_DIR/bios/amiga
 
