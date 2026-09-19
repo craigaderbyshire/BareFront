@@ -2341,6 +2341,128 @@ std::vector<fs::path> scanGames(
         }
     }
 
+    // --------------------------------------------------
+    // VICE fliplist support
+    //
+    // A .vfl file represents one multi-disk game.
+    // Media explicitly referenced by that fliplist is
+    // support media and should not appear separately in
+    // BareFront's game list.
+    // --------------------------------------------------
+
+    std::vector<fs::path> fliplistMedia;
+
+    for (const auto& game : games)
+    {
+        std::string extension =
+            game.extension().string();
+
+        std::transform(
+            extension.begin(),
+            extension.end(),
+            extension.begin(),
+            [](unsigned char c)
+            {
+                return static_cast<char>(
+                    std::tolower(c)
+                );
+            }
+        );
+
+        if (extension != ".vfl")
+            continue;
+
+        std::ifstream fliplist(game);
+
+        if (!fliplist)
+            continue;
+
+        std::string line;
+
+        while (std::getline(fliplist, line))
+        {
+            if (!line.empty() &&
+                line.back() == '\r')
+            {
+                line.pop_back();
+            }
+
+            const std::size_t first =
+                line.find_first_not_of(" \t");
+
+            if (first == std::string::npos ||
+                line[first] == ';')
+            {
+                continue;
+            }
+
+            const std::size_t last =
+                line.find_last_not_of(" \t");
+
+            line =
+                line.substr(
+                    first,
+                    last - first + 1
+                );
+
+            fs::path mediaPath(line);
+
+            if (mediaPath.is_relative())
+            {
+                mediaPath =
+                    game.parent_path() /
+                    mediaPath;
+            }
+
+            fliplistMedia.push_back(
+                mediaPath.lexically_normal()
+            );
+        }
+    }
+
+    if (!fliplistMedia.empty())
+    {
+        games.erase(
+            std::remove_if(
+                games.begin(),
+                games.end(),
+                [&](const fs::path& game)
+                {
+                    std::string extension =
+                        game.extension().string();
+
+                    std::transform(
+                        extension.begin(),
+                        extension.end(),
+                        extension.begin(),
+                        [](unsigned char c)
+                        {
+                            return static_cast<char>(
+                                std::tolower(c)
+                            );
+                        }
+                    );
+
+                    // The .vfl itself remains the visible
+                    // BareFront game entry.
+                    if (extension == ".vfl")
+                        return false;
+
+                    const fs::path normalisedGame =
+                        game.lexically_normal();
+
+                    return
+                        std::find(
+                            fliplistMedia.begin(),
+                            fliplistMedia.end(),
+                            normalisedGame
+                        ) != fliplistMedia.end();
+                }
+            ),
+            games.end()
+        );
+    }
+
     std::sort(
         games.begin(),
         games.end()
