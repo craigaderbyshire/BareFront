@@ -2,25 +2,41 @@
 
 set -Eeuo pipefail
 
-if (( $# != 5 )); then
-    echo "Usage: $0 OUTPUT ASPECT_WIDTH ASPECT_HEIGHT OUTPUT_WIDTH OUTPUT_HEIGHT" >&2
+if (( $# != 9 )); then
+    echo "Usage: $0 OUTPUT SOURCE_WIDTH SOURCE_HEIGHT CROP_X CROP_Y CROP_WIDTH CROP_HEIGHT OUTPUT_WIDTH OUTPUT_HEIGHT" >&2
     exit 2
 fi
 
 OUTPUT_PATH="$1"
-ASPECT_WIDTH="$2"
-ASPECT_HEIGHT="$3"
-OUTPUT_WIDTH="$4"
-OUTPUT_HEIGHT="$5"
+SOURCE_WIDTH="$2"
+SOURCE_HEIGHT="$3"
+CROP_X="$4"
+CROP_Y="$5"
+CROP_WIDTH="$6"
+CROP_HEIGHT="$7"
+OUTPUT_WIDTH="$8"
+OUTPUT_HEIGHT="$9"
 
 for VALUE in \
-    "$ASPECT_WIDTH" \
-    "$ASPECT_HEIGHT" \
+    "$SOURCE_WIDTH" \
+    "$SOURCE_HEIGHT" \
+    "$CROP_WIDTH" \
+    "$CROP_HEIGHT" \
     "$OUTPUT_WIDTH" \
     "$OUTPUT_HEIGHT"
 do
     if [[ ! "$VALUE" =~ ^[1-9][0-9]*$ ]]; then
         echo "Invalid capture dimension: $VALUE" >&2
+        exit 2
+    fi
+done
+
+for VALUE in \
+    "$CROP_X" \
+    "$CROP_Y"
+do
+    if [[ ! "$VALUE" =~ ^[0-9]+$ ]]; then
+        echo "Invalid capture position: $VALUE" >&2
         exit 2
     fi
 done
@@ -157,21 +173,43 @@ if [[ ! -s "$RAW_OUTPUT" ]]; then
     exit 1
 fi
 
-if (( 1280 * ASPECT_HEIGHT >
-      720 * ASPECT_WIDTH ))
-then
-    CROP_WIDTH=$((720 * ASPECT_WIDTH / ASPECT_HEIGHT))
-    CROP_HEIGHT=720
-else
-    CROP_WIDTH=1280
-    CROP_HEIGHT=$((1280 * ASPECT_HEIGHT / ASPECT_WIDTH))
+# Map the detected game rectangle from the Gamescope window
+# into the fixed 1280x720 PipeWire capture.
+PIPEWIRE_WIDTH=1280
+PIPEWIRE_HEIGHT=720
+
+PIPE_CROP_X=$((CROP_X * PIPEWIRE_WIDTH / SOURCE_WIDTH))
+PIPE_CROP_Y=$((CROP_Y * PIPEWIRE_HEIGHT / SOURCE_HEIGHT))
+
+PIPE_CROP_RIGHT=$(((CROP_X + CROP_WIDTH) * PIPEWIRE_WIDTH / SOURCE_WIDTH))
+PIPE_CROP_BOTTOM=$(((CROP_Y + CROP_HEIGHT) * PIPEWIRE_HEIGHT / SOURCE_HEIGHT))
+
+if (( PIPE_CROP_RIGHT > PIPEWIRE_WIDTH )); then
+    PIPE_CROP_RIGHT=$PIPEWIRE_WIDTH
 fi
 
-CROP_WIDTH=$((CROP_WIDTH - CROP_WIDTH % 2))
-CROP_HEIGHT=$((CROP_HEIGHT - CROP_HEIGHT % 2))
+if (( PIPE_CROP_BOTTOM > PIPEWIRE_HEIGHT )); then
+    PIPE_CROP_BOTTOM=$PIPEWIRE_HEIGHT
+fi
 
+# H.264 / yuv420p require even crop coordinates and dimensions.
+PIPE_CROP_X=$((PIPE_CROP_X - PIPE_CROP_X % 2))
+PIPE_CROP_Y=$((PIPE_CROP_Y - PIPE_CROP_Y % 2))
 
-FILTER="crop=${CROP_WIDTH}:${CROP_HEIGHT}:(in_w-out_w)/2:(in_h-out_h)/2"
+PIPE_CROP_WIDTH=$((PIPE_CROP_RIGHT - PIPE_CROP_X))
+PIPE_CROP_HEIGHT=$((PIPE_CROP_BOTTOM - PIPE_CROP_Y))
+
+PIPE_CROP_WIDTH=$((PIPE_CROP_WIDTH - PIPE_CROP_WIDTH % 2))
+PIPE_CROP_HEIGHT=$((PIPE_CROP_HEIGHT - PIPE_CROP_HEIGHT % 2))
+
+if (( PIPE_CROP_WIDTH < 2 ||
+      PIPE_CROP_HEIGHT < 2 ))
+then
+    echo "Mapped Gamescope crop is invalid." >&2
+    exit 1
+fi
+
+FILTER="crop=${PIPE_CROP_WIDTH}:${PIPE_CROP_HEIGHT}:${PIPE_CROP_X}:${PIPE_CROP_Y}"
 FILTER+=",scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:flags=lanczos,setsar=1"
 
 ffmpeg \

@@ -891,6 +891,9 @@ pid_t startRecording(
     }
 
 
+    const CaptureRect windowRect =
+        rect;
+
     rect =
         detectGameContentRect(
             display,
@@ -980,12 +983,32 @@ pid_t startRecording(
             );
 
 
-        std::string aspectWidth =
+        std::string sourceWidth =
+            std::to_string(
+                windowRect.w
+            );
+
+        std::string sourceHeight =
+            std::to_string(
+                windowRect.h
+            );
+
+        std::string cropX =
+            std::to_string(
+                rect.x
+            );
+
+        std::string cropY =
+            std::to_string(
+                rect.y
+            );
+
+        std::string cropWidth =
             std::to_string(
                 rect.w
             );
 
-        std::string aspectHeight =
+        std::string cropHeight =
             std::to_string(
                 rect.h
             );
@@ -996,10 +1019,8 @@ pid_t startRecording(
             );
 
         std::string scaledHeight =
-            std::string(
-                std::to_string(
-                    outputHeight
-                )
+            std::to_string(
+                outputHeight
             );
 
 
@@ -1013,8 +1034,12 @@ pid_t startRecording(
                 recorderPath.c_str(),
                 recorderPath.c_str(),
                 outputPath.c_str(),
-                aspectWidth.c_str(),
-                aspectHeight.c_str(),
+                sourceWidth.c_str(),
+                sourceHeight.c_str(),
+                cropX.c_str(),
+                cropY.c_str(),
+                cropWidth.c_str(),
+                cropHeight.c_str(),
                 scaledWidth.c_str(),
                 scaledHeight.c_str(),
                 static_cast<char*>(

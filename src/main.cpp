@@ -911,36 +911,17 @@ public:
             return false;
         }
 
-        // Fit into the existing 320 x 240 CRT opening
-        // without stretching or cropping. The STORED
-        // capture is untouched; only playback is scaled.
-        const double widthScale =
-            320.0 /
-            static_cast<double>(sourceWidth);
-
-        const double heightScale =
-            240.0 /
-            static_cast<double>(sourceHeight);
-
-        const double scale =
-            std::min(
-                widthScale,
-                heightScale
-            );
-
+        // Keep the stored preview dimensions.
+        //
+        // The video is stretched only when SDL renders it
+        // into the CRT screen opening. This keeps portrait
+        // detection based on the real capture geometry while
+        // making every preview fill the monitor exactly.
         frameWidth =
-            std::max(
-                1,
-                static_cast<int>(
-                    sourceWidth * scale + 0.5)
-            );
+            sourceWidth;
 
         frameHeight =
-            std::max(
-                1,
-                static_cast<int>(
-                    sourceHeight * scale + 0.5)
-            );
+            sourceHeight;
 
         texture =
             SDL_CreateTexture(
@@ -971,11 +952,7 @@ public:
         }
 
         std::string scaleFilter =
-            "fps=30,scale=" +
-            std::to_string(frameWidth) +
-            ":" +
-            std::to_string(frameHeight) +
-            ":flags=neighbor";
+            "fps=30";
 
         childPid =
             fork();
@@ -1229,10 +1206,11 @@ public:
             }
         }
 
-        drawTextureContained(
+        SDL_RenderCopy(
             renderer,
             texture,
-            area
+            nullptr,
+            &area
         );
     }
 
@@ -1342,45 +1320,133 @@ bool determineTatePreview(
         return false;
     }
 
-    int mediaWidth =
-        0;
+    // Arcade orientation comes from MAME machine metadata,
+    // never from the dimensions of a screenshot or video.
+    //
+    // A capture can be almost square or temporarily contain
+    // black borders depending on the title/attract/gameplay
+    // frame that happened to be recorded. MAME's display
+    // rotation is the authoritative orientation.
+    static std::unordered_map<std::string, bool>
+        tateCache;
 
-    int mediaHeight =
-        0;
+    const std::string setName =
+        game.stem().string();
 
-    fs::path videoPath =
-        findVideo(
-            system,
-            game
+    auto cached =
+        tateCache.find(
+            setName
         );
 
-    if (!videoPath.empty() &&
-        probeVideoDimensions(
-            videoPath,
-            mediaWidth,
-            mediaHeight))
+    if (cached !=
+        tateCache.end())
     {
-        return mediaHeight >
-            mediaWidth;
+        return cached->second;
     }
 
-    fs::path screenshotPath =
-        findScreenshot(
-            system.screenshotFolder,
-            game
+    std::string command =
+        "/usr/games/mame -listxml " +
+        shellQuote(setName) +
+        " 2>/dev/null";
+
+    FILE* pipe =
+        popen(
+            command.c_str(),
+            "r"
         );
 
-    if (!screenshotPath.empty() &&
-        probeImageDimensions(
-            screenshotPath,
-            mediaWidth,
-            mediaHeight))
+    if (!pipe)
     {
-        return mediaHeight >
-            mediaWidth;
+        return false;
     }
 
-    return false;
+    bool orientationFound =
+        false;
+
+    bool tate =
+        false;
+
+    char buffer[4096];
+
+    while (fgets(
+               buffer,
+               sizeof(buffer),
+               pipe))
+    {
+        std::string line =
+            buffer;
+
+        if (line.find("<display ") ==
+            std::string::npos)
+        {
+            continue;
+        }
+
+        std::size_t rotateStart =
+            line.find("rotate=\"");
+
+        if (rotateStart ==
+            std::string::npos)
+        {
+            continue;
+        }
+
+        rotateStart +=
+            8;
+
+        std::size_t rotateEnd =
+            line.find(
+                '"',
+                rotateStart
+            );
+
+        if (rotateEnd ==
+            std::string::npos)
+        {
+            continue;
+        }
+
+        std::string rotate =
+            line.substr(
+                rotateStart,
+                rotateEnd -
+                    rotateStart
+            );
+
+        if (rotate == "0" ||
+            rotate == "180")
+        {
+            orientationFound =
+                true;
+
+            tate =
+                false;
+
+            break;
+        }
+
+        if (rotate == "90" ||
+            rotate == "270")
+        {
+            orientationFound =
+                true;
+
+            tate =
+                true;
+
+            break;
+        }
+    }
+
+    pclose(pipe);
+
+    if (orientationFound)
+    {
+        tateCache[setName] =
+            tate;
+    }
+
+    return tate;
 }
 
 
@@ -5781,27 +5847,13 @@ int main()
             };
 
 
-            // Decide TATE from the media that is ACTUALLY being drawn.
-            // This is more robust than relying on stored preview state.
+            // Arcade TATE orientation comes from MAME metadata.
+            // Preview media dimensions must never decide whether
+            // the machine is horizontal or vertical.
             bool tateNow =
-                false;
-
-            if (isArcadeSystem(
-                    systems[activeSystemIndex]))
-            {
-                if (videoPlayer.hasFrame())
-                {
-                    tateNow =
-                        videoPlayer.isPortrait();
-                }
-                else if (screenshotTexture)
-                {
-                    tateNow =
-                        textureIsPortrait(
-                            screenshotTexture
-                        );
-                }
-            }
+                isArcadeSystem(
+                    systems[activeSystemIndex]) &&
+                useTatePreview;
 
 
             if (tateNow)

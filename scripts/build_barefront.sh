@@ -35,3 +35,27 @@ g++ \
 
 echo
 echo "Built: $ROOT_DIR/overlay_helper"
+
+echo
+echo "Checking BareFront capture helper..."
+
+CAPTURE_SOURCE="$ROOT_DIR/src/capture_helper.cpp"
+CAPTURE_BINARY="$ROOT_DIR/capture_helper"
+
+if [[ ! -x "$CAPTURE_BINARY" ||
+      "$CAPTURE_SOURCE" -nt "$CAPTURE_BINARY" ]]; then
+
+    echo "Building BareFront capture helper..."
+
+    g++ -std=c++17 "$CAPTURE_SOURCE" -o "$CAPTURE_BINARY" \
+        $(sdl2-config --cflags --libs) \
+        -lX11 -lXi
+
+    echo
+    echo "Built: $CAPTURE_BINARY"
+
+else
+
+    echo "Capture helper is already built and current."
+
+fi
