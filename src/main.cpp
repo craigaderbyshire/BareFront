@@ -5112,9 +5112,135 @@ int main()
                             // to keep FFmpeg working in the background.
                             videoPlayer.stop();
 
+
+                            // Present a clean launch transition before
+                            // Gamescope and the emulator begin creating
+                            // their windows. If the desktop compositor
+                            // briefly exposes BareFront during startup,
+                            // only this black loading frame is visible.
+                            SDL_SetRenderDrawColor(
+                                renderer,
+                                0,
+                                0,
+                                0,
+                                255
+                            );
+
+                            SDL_RenderClear(
+                                renderer
+                            );
+
+
+                            SDL_Rect loadingArea =
+                            {
+                                0,
+                                0,
+                                SCREEN_WIDTH,
+                                SCREEN_HEIGHT
+                            };
+
+
+                            drawTextCentered(
+                                renderer,
+                                gameTitleFont,
+                                "Loading...",
+                                loadingArea,
+                                SDL_Color
+                                {
+                                    255,
+                                    255,
+                                    255,
+                                    255
+                                }
+                            );
+
+
+                            SDL_RenderPresent(
+                                renderer
+                            );
+
+
+                            // Hold the clean BareFront launch screen
+                            // briefly before any gameplay presentation
+                            // helpers or emulator windows are started.
+                            SDL_Delay(
+                                2000
+                            );
+
+
+                            // Leave a plain black BareFront frame
+                            // underneath gameplay. If Gamescope or an
+                            // emulator window disappears during handover,
+                            // no stale menu or Loading... text is exposed.
+                            SDL_SetRenderDrawColor(
+                                renderer,
+                                0,
+                                0,
+                                0,
+                                255
+                            );
+
+                            SDL_RenderClear(
+                                renderer
+                            );
+
+                            SDL_RenderPresent(
+                                renderer
+                            );
+
+
                             launchGame(
                                 systems[activeSystemIndex],
                                 games[gameSelected]
+                            );
+
+
+                            // Gameplay and its presentation helpers have
+                            // completely closed. Hold a clean transition
+                            // before revealing the BareFront game menu.
+                            SDL_SetRenderDrawColor(
+                                renderer,
+                                0,
+                                0,
+                                0,
+                                255
+                            );
+
+                            SDL_RenderClear(
+                                renderer
+                            );
+
+
+                            SDL_Rect returningArea =
+                            {
+                                0,
+                                0,
+                                SCREEN_WIDTH,
+                                SCREEN_HEIGHT
+                            };
+
+
+                            drawTextCentered(
+                                renderer,
+                                gameTitleFont,
+                                "Returning...",
+                                returningArea,
+                                SDL_Color
+                                {
+                                    255,
+                                    255,
+                                    255,
+                                    255
+                                }
+                            );
+
+
+                            SDL_RenderPresent(
+                                renderer
+                            );
+
+                            SDL_Delay(
+                                2000
                             );
 
 
