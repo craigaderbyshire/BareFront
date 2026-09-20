@@ -8,7 +8,7 @@ ROM="${1:-}"
 MAME="/usr/games/mame"
 GAMESCOPE="/usr/games/gamescope"
 PRESENTATION_HELPER="$ROOT/c64_presentation_helper"
-BARECRT="$ROOT/assets/shaders/barecrt/BareCRT.fx"
+BARECRT="$ROOT/assets/shaders/barecrt/BareCRT_v2.fx"
 
 OUTPUT_WIDTH=1920
 OUTPUT_HEIGHT=1080
@@ -117,6 +117,9 @@ FAMILY_ROOT="${CLONE_OF:-$SET_NAME}"
 
 GEOMETRY_MODE="native raster / integer pixels"
 
+PRESENTATION_WIDTH="$NATIVE_WIDTH"
+PRESENTATION_HEIGHT="$NATIVE_HEIGHT"
+
 MAME_GEOMETRY_ARGS=(
     -nounevenstretch
     -nounevenstretchx
@@ -144,6 +147,9 @@ case "$FAMILY_ROOT" in
 
             GEOMETRY_MODE="lossless Wonder Boy X/2: 512x224 -> 256x224"
 
+            PRESENTATION_WIDTH=256
+            PRESENTATION_HEIGHT=224
+
             MAME_GEOMETRY_ARGS=(
                 -resolution 256x224
                 -nounevenstretch
@@ -156,6 +162,95 @@ case "$FAMILY_ROOT" in
         ;;
 
 esac
+
+
+# ------------------------------------------------------------
+# BareCRT presentation geometry
+#
+# MAME rotates vertical games before Gamescope receives them.
+# Therefore rotate=90/270 swaps the presented width/height.
+#
+# BareCRTScale describes the final output pixels occupied by one
+# emulated source pixel. BeamAxis follows the physical CRT:
+#
+#   0 = horizontal scanlines
+#   1 = vertical scanlines for a rotated/TATE monitor
+#
+# Phase aligns the beam pattern with the centred integer-scaled
+# image rather than the top-left corner of the 1080p backbuffer.
+# ------------------------------------------------------------
+
+if [[ ! "$PRESENTATION_WIDTH" =~ ^[0-9]+$ ||
+      ! "$PRESENTATION_HEIGHT" =~ ^[0-9]+$ ||
+      "$PRESENTATION_WIDTH" -le 0 ||
+      "$PRESENTATION_HEIGHT" -le 0 ]]; then
+
+    echo "Unable to determine valid Arcade raster geometry." >&2
+    exit 1
+fi
+
+
+case "$NATIVE_ROTATE" in
+
+    0|180)
+        DISPLAY_WIDTH="$PRESENTATION_WIDTH"
+        DISPLAY_HEIGHT="$PRESENTATION_HEIGHT"
+        BAREFRONT_BEAM_AXIS=0
+        ;;
+
+    90|270)
+        DISPLAY_WIDTH="$PRESENTATION_HEIGHT"
+        DISPLAY_HEIGHT="$PRESENTATION_WIDTH"
+        BAREFRONT_BEAM_AXIS=1
+        ;;
+
+    *)
+        echo "Unsupported MAME rotation: ${NATIVE_ROTATE:-unknown}" >&2
+        exit 1
+        ;;
+
+esac
+
+
+SCALE_X=$((OUTPUT_WIDTH / DISPLAY_WIDTH))
+SCALE_Y=$((OUTPUT_HEIGHT / DISPLAY_HEIGHT))
+
+if (( SCALE_X < SCALE_Y )); then
+    BAREFRONT_SCALE=$SCALE_X
+else
+    BAREFRONT_SCALE=$SCALE_Y
+fi
+
+
+if (( BAREFRONT_SCALE < 1 )); then
+    echo "Arcade raster does not fit the configured output." >&2
+    exit 1
+fi
+
+
+LEFT_MARGIN=$((
+    (OUTPUT_WIDTH -
+     (DISPLAY_WIDTH * BAREFRONT_SCALE)) / 2
+))
+
+TOP_MARGIN=$((
+    (OUTPUT_HEIGHT -
+     (DISPLAY_HEIGHT * BAREFRONT_SCALE)) / 2
+))
+
+
+BAREFRONT_PHASE_X=0
+BAREFRONT_PHASE_Y=0
+
+if (( BAREFRONT_BEAM_AXIS == 1 )); then
+    BAREFRONT_PHASE_X=$((
+        LEFT_MARGIN % BAREFRONT_SCALE
+    ))
+else
+    BAREFRONT_PHASE_Y=$((
+        TOP_MARGIN % BAREFRONT_SCALE
+    ))
+fi
 
 
 SAVE_ROOT="$ROOT/saves/arcade/mame"
@@ -241,6 +336,10 @@ reshadeIncludePath = $ROOT/assets/shaders/barecrt
 reshadeTexturePath = $ROOT/assets/shaders/barecrt
 enableOnLaunch = True
 toggleKey = F8
+BareFrontScale = ${BAREFRONT_SCALE}.0
+BareFrontBeamAxis = ${BAREFRONT_BEAM_AXIS}.0
+BareFrontPhaseX = ${BAREFRONT_PHASE_X}.0
+BareFrontPhaseY = ${BAREFRONT_PHASE_Y}.0
 EOF2
 
 
@@ -254,7 +353,11 @@ echo "  Geometry:     $GEOMETRY_MODE"
 echo "  Filtering:    disabled"
 echo "  Gamescope:    dynamic integer scale into ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}"
 echo "  Scale filter: nearest"
-echo "  CRT:          BareCRT"
+echo "  CRT:          BareCRT v2"
+echo "  CRT raster:   ${DISPLAY_WIDTH}x${DISPLAY_HEIGHT}"
+echo "  CRT scale:    ${BAREFRONT_SCALE}x"
+echo "  CRT axis:     $([[ "$BAREFRONT_BEAM_AXIS" == "1" ]] && echo vertical || echo horizontal)"
+echo "  CRT phase:    X=${BAREFRONT_PHASE_X} Y=${BAREFRONT_PHASE_Y}"
 
 
 # Release XFCE's reserved work area before Gamescope is created.

@@ -773,7 +773,7 @@ MEDNAFEN_MD_CONFIG="$MEDNAFEN_MD_PROFILE/mednafen.cfg"
 BAREFRONT_AUDIO_HELPER="$BAREFRONT_DIR/scripts/barefront_audio.sh"
 
 MEDNAFEN_MD_BARECRT_DIR="$BAREFRONT_DIR/assets/shaders/barecrt"
-MEDNAFEN_MD_BARECRT_SHADER="$MEDNAFEN_MD_BARECRT_DIR/BareCRT.fx"
+MEDNAFEN_MD_BARECRT_SHADER="$MEDNAFEN_MD_BARECRT_DIR/BareCRT_v2.fx"
 MEDNAFEN_MD_RESHADE_INCLUDE="$MEDNAFEN_MD_BARECRT_DIR/ReShade.fxh"
 MEDNAFEN_MD_OVERLAY="$BAREFRONT_DIR/assets/overlays/megadrive.png"
 
@@ -1786,7 +1786,7 @@ PCSX2_DIR="$BAREFRONT_DIR/emulators/pcsx2"
 PCSX2_EXE="$PCSX2_DIR/PCSX2.AppImage"
 PCSX2_LAUNCHER="$PCSX2_DIR/launch_pcsx2.sh"
 PCSX2_GAMESCOPE="/usr/games/gamescope"
-PCSX2_BARECRT="$BAREFRONT_DIR/assets/shaders/barecrt/BareCRT.fx"
+PCSX2_BARECRT="$BAREFRONT_DIR/assets/shaders/barecrt/BareCRT_v2.fx"
 PCSX2_OVERLAY="$BAREFRONT_DIR/assets/overlays/ps2.png"
 
 # BareFront deliberately pins PCSX2 to a known build.
@@ -2273,7 +2273,7 @@ PCSX2_INI="$PCSX2_DATA_DIR/inis/PCSX2.ini"
 BIOS_DIR="$PCSX2_DATA_DIR/bios"
 
 GAMESCOPE="/usr/games/gamescope"
-BARECRT="$BAREFRONT_DIR/assets/shaders/barecrt/BareCRT.fx"
+BARECRT="$BAREFRONT_DIR/assets/shaders/barecrt/BareCRT_v2.fx"
 
 NATIVE_WIDTH=640
 NATIVE_HEIGHT=480
@@ -2512,6 +2512,7 @@ reshadeIncludePath = $BAREFRONT_DIR/assets/shaders/barecrt
 reshadeTexturePath = $BAREFRONT_DIR/assets/shaders/barecrt
 enableOnLaunch = True
 toggleKey = F8
+BareFrontScale = 2.0
 EOF
 
 echo "Starting PlayStation 2 through per-game Gamescope..."
@@ -3090,7 +3091,7 @@ if [[ ! -x "$GAMESCOPE" ]]; then
     exit 1
 fi
 
-if [[ ! -f "$ROOT/assets/shaders/barecrt/BareCRT.fx" ]]; then
+if [[ ! -f "$ROOT/assets/shaders/barecrt/BareCRT_v2.fx" ]]; then
     echo "BareCRT shader not found." >&2
     exit 1
 fi
@@ -3107,11 +3108,12 @@ VKBASALT_CONFIG="/tmp/barefront-vkbasalt-dreamcast.conf"
 
 cat > "$VKBASALT_CONFIG" <<EOF2
 effects = barecrt
-barecrt = $ROOT/assets/shaders/barecrt/BareCRT.fx
+barecrt = $ROOT/assets/shaders/barecrt/BareCRT_v2.fx
 reshadeIncludePath = $ROOT/assets/shaders/barecrt
 reshadeTexturePath = $ROOT/assets/shaders/barecrt
 enableOnLaunch = True
 toggleKey = F8
+BareFrontScale = 2.0
 EOF2
 
 echo "Starting Dreamcast through per-game Gamescope..."
@@ -4567,7 +4569,7 @@ MEDNAFEN_PCE_PROFILE="$BAREFRONT_DIR/saves/pcengine/mednafen"
 MEDNAFEN_PCE_CONFIG="$MEDNAFEN_PCE_PROFILE/mednafen.cfg"
 
 MEDNAFEN_PCE_BARECRT_DIR="$BAREFRONT_DIR/assets/shaders/barecrt"
-MEDNAFEN_PCE_BARECRT_SHADER="$MEDNAFEN_PCE_BARECRT_DIR/BareCRT.fx"
+MEDNAFEN_PCE_BARECRT_SHADER="$MEDNAFEN_PCE_BARECRT_DIR/BareCRT_v2.fx"
 MEDNAFEN_PCE_RESHADE_INCLUDE="$MEDNAFEN_PCE_BARECRT_DIR/ReShade.fxh"
 MEDNAFEN_PCE_OVERLAY="$BAREFRONT_DIR/assets/overlays/pcengine.png"
 
@@ -5062,7 +5064,7 @@ C64_PAL_MODE="1920x1080_C64PAL"
 
 BEZEL="$ROOT/assets/bezels/c64.png"
 BEZEL_SHADER="$ROOT/assets/shaders/c64/BareFront_C64_Bezel.fx"
-BARECRT_SHADER="$ROOT/assets/shaders/barecrt/BareCRT.fx"
+BARECRT_SHADER="$ROOT/assets/shaders/barecrt/BareCRT_v2.fx"
 
 VKBASALT_CONFIG="/tmp/barefront-vkbasalt-c64.conf"
 
@@ -5358,6 +5360,8 @@ reshadeTexturePath = $ROOT/assets/bezels
 
 enableOnLaunch = True
 toggleKey = F8
+BareFrontScale = 3.0
+BareFrontPhaseY = 1.0
 EOF2
 
 
@@ -5542,7 +5546,7 @@ if [[ ! -x "/usr/games/gamescope" ]]; then
     die "Arcade presentation requires Gamescope."
 fi
 
-if [[ ! -f "$BAREFRONT_DIR/assets/shaders/barecrt/BareCRT.fx" ]]; then
+if [[ ! -f "$BAREFRONT_DIR/assets/shaders/barecrt/BareCRT_v2.fx" ]]; then
     die "Arcade presentation requires the shared BareCRT shader."
 fi
 
@@ -5577,7 +5581,7 @@ if [[ ! -x "/usr/games/gamescope" ]]; then
     die "Neo Geo presentation requires Gamescope."
 fi
 
-if [[ ! -f "$BAREFRONT_DIR/assets/shaders/barecrt/BareCRT.fx" ]]; then
+if [[ ! -f "$BAREFRONT_DIR/assets/shaders/barecrt/BareCRT_v2.fx" ]]; then
     die "Neo Geo presentation requires the shared BareCRT shader."
 fi
 

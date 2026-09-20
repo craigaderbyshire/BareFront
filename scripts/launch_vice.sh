@@ -19,7 +19,7 @@ C64_PAL_MODE="1920x1080_C64PAL"
 
 BEZEL="$ROOT/assets/bezels/c64.png"
 BEZEL_SHADER="$ROOT/assets/shaders/c64/BareFront_C64_Bezel.fx"
-BARECRT_SHADER="$ROOT/assets/shaders/barecrt/BareCRT.fx"
+BARECRT_SHADER="$ROOT/assets/shaders/barecrt/BareCRT_v2.fx"
 
 VKBASALT_CONFIG="/tmp/barefront-vkbasalt-c64.conf"
 
@@ -315,6 +315,8 @@ reshadeTexturePath = $ROOT/assets/bezels
 
 enableOnLaunch = True
 toggleKey = F8
+BareFrontScale = 3.0
+BareFrontPhaseY = 1.0
 EOF2
 
 

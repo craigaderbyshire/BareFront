@@ -40,7 +40,7 @@ if [[ ! -x "$GAMESCOPE" ]]; then
     exit 1
 fi
 
-if [[ ! -f "$ROOT/assets/shaders/barecrt/BareCRT.fx" ]]; then
+if [[ ! -f "$ROOT/assets/shaders/barecrt/BareCRT_v2.fx" ]]; then
     echo "BareCRT shader not found." >&2
     exit 1
 fi
@@ -53,11 +53,12 @@ VKBASALT_CONFIG="/tmp/barefront-vkbasalt-jaguar.conf"
 
 cat > "$VKBASALT_CONFIG" <<EOF2
 effects = barecrt
-barecrt = $ROOT/assets/shaders/barecrt/BareCRT.fx
+barecrt = $ROOT/assets/shaders/barecrt/BareCRT_v2.fx
 reshadeIncludePath = $ROOT/assets/shaders/barecrt
 reshadeTexturePath = $ROOT/assets/shaders/barecrt
 enableOnLaunch = True
 toggleKey = F8
+BareFrontScale = 4.0
 EOF2
 
 echo "Starting Atari Jaguar through per-game Gamescope..."

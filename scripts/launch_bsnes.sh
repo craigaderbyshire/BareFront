@@ -60,11 +60,12 @@ VKBASALT_CONFIG="/tmp/barefront-vkbasalt-snes.conf"
 
 cat > "$VKBASALT_CONFIG" <<EOF2
 effects = barecrt
-barecrt = $ROOT/assets/shaders/barecrt/BareCRT.fx
+barecrt = $ROOT/assets/shaders/barecrt/BareCRT_v2.fx
 reshadeIncludePath = $ROOT/assets/shaders/barecrt
 reshadeTexturePath = $ROOT/assets/shaders/barecrt
 enableOnLaunch = True
 toggleKey = F8
+BareFrontScale = 4.0
 EOF2
 
 echo "Starting SNES through per-game Gamescope..."

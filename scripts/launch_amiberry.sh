@@ -14,7 +14,7 @@ PROFILE="$ROOT/saves/amiga/amiberry"
 ESC_HELPER="$ROOT/emulators/amiberry/amiberry_esc_helper"
 PRESENTATION_HELPER="$ROOT/c64_presentation_helper"
 
-BARECRT="$ROOT/assets/shaders/barecrt/BareCRT.fx"
+BARECRT="$ROOT/assets/shaders/barecrt/BareCRT_v2.fx"
 
 OUTPUT_WIDTH=1920
 OUTPUT_HEIGHT=1080
@@ -268,6 +268,9 @@ reshadeIncludePath = $ROOT/assets/shaders/barecrt
 reshadeTexturePath = $ROOT/assets/shaders/barecrt
 enableOnLaunch = True
 toggleKey = F8
+BareFrontScale = 4.0
+BareFrontSourceScaleX = 3.0
+BareFrontSourceScaleY = 4.0
 EOF_VKBASALT
 
 # ------------------------------------------------------------

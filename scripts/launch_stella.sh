@@ -56,11 +56,12 @@ VKBASALT_CONFIG="/tmp/barefront-vkbasalt-atari2600.conf"
 
 cat > "$VKBASALT_CONFIG" <<EOF2
 effects = barecrt
-barecrt = $ROOT/assets/shaders/barecrt/BareCRT.fx
+barecrt = $ROOT/assets/shaders/barecrt/BareCRT_v2.fx
 reshadeIncludePath = $ROOT/assets/shaders/barecrt
 reshadeTexturePath = $ROOT/assets/shaders/barecrt
 enableOnLaunch = True
 toggleKey = F8
+BareFrontScale = 4.0
 EOF2
 
 echo "Starting Atari 2600 through per-game Gamescope..."
