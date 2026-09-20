@@ -42,6 +42,171 @@ std::string cleanGameTitle(
     std::string title =
         game.stem().string();
 
+
+    // Amiga WHDLoad archives commonly end with metadata such as:
+    //
+    // _v1.8_2063
+    // _v3.2_AGA_0047
+    //
+    // Strip only an obvious trailing WHDLoad metadata chain.
+    // The real filename on disk is never changed.
+    std::string extension =
+        game.extension().string();
+
+    std::transform(
+        extension.begin(),
+        extension.end(),
+        extension.begin(),
+        [](unsigned char character)
+        {
+            return static_cast<char>(
+                std::tolower(character)
+            );
+        }
+    );
+
+
+    if (extension == ".lha")
+    {
+        auto isNumericToken =
+            [](const std::string& token)
+            {
+                if (token.empty())
+                    return false;
+
+                return std::all_of(
+                    token.begin(),
+                    token.end(),
+                    [](unsigned char character)
+                    {
+                        return std::isdigit(
+                            character
+                        ) != 0;
+                    }
+                );
+            };
+
+
+        auto isVersionToken =
+            [](const std::string& token)
+            {
+                if (token.size() < 2 ||
+                    (token[0] != 'v' &&
+                     token[0] != 'V'))
+                {
+                    return false;
+                }
+
+                bool sawDigit =
+                    false;
+
+                for (std::size_t index = 1;
+                     index < token.size();
+                     ++index)
+                {
+                    unsigned char character =
+                        static_cast<unsigned char>(
+                            token[index]
+                        );
+
+                    if (std::isdigit(character))
+                    {
+                        sawDigit =
+                            true;
+                    }
+                    else if (character != '.')
+                    {
+                        return false;
+                    }
+                }
+
+                return sawDigit;
+            };
+
+
+        auto isPlatformToken =
+            [](std::string token)
+            {
+                std::transform(
+                    token.begin(),
+                    token.end(),
+                    token.begin(),
+                    [](unsigned char character)
+                    {
+                        return static_cast<char>(
+                            std::toupper(character)
+                        );
+                    }
+                );
+
+                return
+                    token == "AGA" ||
+                    token == "ECS" ||
+                    token == "OCS" ||
+                    token == "CD32" ||
+                    token == "CDTV";
+            };
+
+
+        std::string candidate =
+            title;
+
+        bool sawVersionToken =
+            false;
+
+        while (true)
+        {
+            std::size_t separator =
+                candidate.rfind('_');
+
+            if (separator ==
+                std::string::npos)
+            {
+                break;
+            }
+
+            std::string token =
+                candidate.substr(
+                    separator + 1
+                );
+
+            if (isVersionToken(token))
+            {
+                sawVersionToken =
+                    true;
+
+                candidate.erase(
+                    separator
+                );
+
+                continue;
+            }
+
+            if (isNumericToken(token) ||
+                isPlatformToken(token))
+            {
+                candidate.erase(
+                    separator
+                );
+
+                continue;
+            }
+
+            break;
+        }
+
+
+        // Requiring a version token prevents an ordinary title
+        // ending in a number or platform-like word being stripped.
+        if (sawVersionToken &&
+            !candidate.empty())
+        {
+            title =
+                candidate;
+        }
+    }
+
+
     // Underscores are usually just filename separators.
     std::replace(
         title.begin(),
@@ -49,6 +214,57 @@ std::string cleanGameTitle(
         '_',
         ' '
     );
+
+
+    // WHDLoad filenames often join normal title words together,
+    // for example "PinballFantasies" or
+    // "SensibleWorldOfSoccer9697".
+    //
+    // Add display-only spaces at obvious word/number boundaries.
+    // The real filename remains unchanged.
+    if (extension == ".lha")
+    {
+        std::string spaced;
+
+        for (std::size_t index = 0;
+             index < title.size();
+             ++index)
+        {
+            unsigned char current =
+                static_cast<unsigned char>(
+                    title[index]
+                );
+
+            if (index > 0)
+            {
+                unsigned char previous =
+                    static_cast<unsigned char>(
+                        title[index - 1]
+                    );
+
+                bool lowerToUpper =
+                    std::islower(previous) &&
+                    std::isupper(current);
+
+                bool letterToDigit =
+                    std::isalpha(previous) &&
+                    std::isdigit(current);
+
+                if ((lowerToUpper ||
+                     letterToDigit) &&
+                    previous != ' ')
+                {
+                    spaced += ' ';
+                }
+            }
+
+            spaced +=
+                title[index];
+        }
+
+        title =
+            spaced;
+    }
 
 
     auto trimRight =
@@ -262,6 +478,32 @@ loadMameDisplayTitles(
                 quoteEnd -
                     quoteStart - 1
             );
+
+
+        // MAME descriptions commonly append machine/set metadata
+        // in a final parenthesised suffix, for example:
+        //
+        // Donkey Kong (US set 1)
+        // Out Run (sitdown/upright, Rev B)
+        // Wonder Boy (set 1, 315-5177)
+        //
+        // Keep MAME's authoritative title, but hide that final
+        // set/revision detail from BareFront's display only.
+        if (!description.empty() &&
+            description.back() == ')')
+        {
+            std::size_t suffixStart =
+                description.rfind(" (");
+
+            if (suffixStart !=
+                std::string::npos)
+            {
+                description.erase(
+                    suffixStart
+                );
+            }
+        }
+
 
         if (!setName.empty())
         {
