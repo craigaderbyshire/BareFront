@@ -2864,6 +2864,18 @@ bool loadSoundEffect(
     SDL_AudioSpec desiredSpec =
         sourceSpec;
 
+    // BareFront's UI click WAV is 44.1 kHz mono, but the
+    // emulator/gameplay audio path is standardised on 48 kHz.
+    //
+    // Request 48 kHz stereo here so BareFront does not keep the
+    // HDMI/Pulse sink pinned at 44.1 kHz while gameplay is active.
+    // SDL_AudioCVT below converts the small click once at load time.
+    desiredSpec.freq =
+        48000;
+
+    desiredSpec.channels =
+        2;
+
     desiredSpec.callback =
         nullptr;
 
