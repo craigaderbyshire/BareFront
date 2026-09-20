@@ -36,11 +36,6 @@ if [[ ! -x "$GAMESCOPE" ]]; then
     exit 1
 fi
 
-if ! command -v pactl >/dev/null 2>&1; then
-    echo "pactl not found." >&2
-    exit 1
-fi
-
 if ! command -v pasuspender >/dev/null 2>&1; then
     echo "pasuspender not found." >&2
     exit 1
@@ -56,33 +51,21 @@ if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
     export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 fi
 
-PULSE_SINK="$(pactl info | sed -n 's/^Default Sink: //p')"
+AUDIO_HELPER="$ROOT/scripts/barefront_audio.sh"
 
-read -r ALSA_CARD ALSA_DEVICE < <(
-    pactl list sinks | awk -v sink="$PULSE_SINK" '
-        $1 == "Name:" && $2 == sink { found=1 }
-        found && /alsa\.card =/ {
-            gsub(/"/, "", $3)
-            card=$3
-        }
-        found && /alsa\.device =/ {
-            gsub(/"/, "", $3)
-            device=$3
-        }
-        found && card != "" && device != "" {
-            print card, device
-            exit
-        }
-    '
-) || true
-
-if [[ -z "${ALSA_CARD:-}" || -z "${ALSA_DEVICE:-}" ]]; then
-    echo "Could not resolve ALSA device for PulseAudio sink:" >&2
-    echo "  $PULSE_SINK" >&2
+if [[ ! -f "$AUDIO_HELPER" ]]; then
+    echo "BareFront audio helper not found:" >&2
+    echo "  $AUDIO_HELPER" >&2
     exit 1
 fi
 
-AUDIO_DEVICE="sexyal-literal-hw:CARD=${ALSA_CARD},DEV=${ALSA_DEVICE}"
+source "$AUDIO_HELPER"
+
+if ! barefront_audio_resolve; then
+    exit 1
+fi
+
+AUDIO_DEVICE="$BAREFRONT_MEDNAFEN_DEVICE"
 
 VKBASALT_CONFIG="/tmp/barefront-vkbasalt-megadrive.conf"
 
@@ -100,8 +83,7 @@ echo "  Native:      ${NATIVE_WIDTH}x${NATIVE_HEIGHT}"
 echo "  Integer:     ${INTEGER_SCALE}x"
 echo "  Output:      ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}"
 echo "  Filter:      nearest"
-echo "  Pulse sink:  $PULSE_SINK"
-echo "  Direct ALSA: hw:CARD=${ALSA_CARD},DEV=${ALSA_DEVICE}"
+barefront_audio_log
 
 exec pasuspender -- \
     env \

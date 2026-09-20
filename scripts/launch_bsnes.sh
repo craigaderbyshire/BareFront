@@ -40,6 +40,22 @@ if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
     export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 fi
 
+AUDIO_HELPER="$ROOT/scripts/barefront_audio.sh"
+
+if [[ ! -f "$AUDIO_HELPER" ]]; then
+    echo "BareFront audio helper not found:" >&2
+    echo "  $AUDIO_HELPER" >&2
+    exit 1
+fi
+
+source "$AUDIO_HELPER"
+
+if ! barefront_audio_resolve; then
+    exit 1
+fi
+
+export PULSE_SINK="$BAREFRONT_AUDIO_SINK"
+
 VKBASALT_CONFIG="/tmp/barefront-vkbasalt-snes.conf"
 
 cat > "$VKBASALT_CONFIG" <<EOF2
@@ -54,8 +70,9 @@ EOF2
 echo "Starting SNES through per-game Gamescope..."
 echo "  Native:   ${NATIVE_WIDTH}x${NATIVE_HEIGHT}"
 echo "  Integer:  ${INTEGER_SCALE}x"
-echo "  Output:   ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}"
-echo "  Filter:   nearest"
+echo "  Output:      ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}"
+echo "  Filter:      nearest"
+barefront_audio_log
 
 env \
     ENABLE_VKBASALT=1 \

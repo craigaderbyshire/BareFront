@@ -770,6 +770,8 @@ MEDNAFEN_MD_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mednafen_md.sh"
 MEDNAFEN_MD_PROFILE="$BAREFRONT_DIR/saves/megadrive/mednafen"
 MEDNAFEN_MD_CONFIG="$MEDNAFEN_MD_PROFILE/mednafen.cfg"
 
+BAREFRONT_AUDIO_HELPER="$BAREFRONT_DIR/scripts/barefront_audio.sh"
+
 MEDNAFEN_MD_BARECRT_DIR="$BAREFRONT_DIR/assets/shaders/barecrt"
 MEDNAFEN_MD_BARECRT_SHADER="$MEDNAFEN_MD_BARECRT_DIR/BareCRT.fx"
 MEDNAFEN_MD_RESHADE_INCLUDE="$MEDNAFEN_MD_BARECRT_DIR/ReShade.fxh"
@@ -793,6 +795,16 @@ chmod +x "$MEDNAFEN_MD_LAUNCHER"
 if [[ ! -x "$MEDNAFEN_MD_LAUNCHER" ]]; then
     die "Mega Drive launcher is not executable."
 fi
+
+if [[ ! -f "$BAREFRONT_AUDIO_HELPER" ]]; then
+    die "BareFront shared audio helper is missing: $BAREFRONT_AUDIO_HELPER"
+fi
+
+if ! bash -n "$BAREFRONT_AUDIO_HELPER"; then
+    die "BareFront shared audio helper failed syntax validation."
+fi
+
+echo "BareFront shared audio helper: OK"
 
 if ! command -v pactl >/dev/null 2>&1; then
     die "Mega Drive direct-HDMI audio requires pactl."
@@ -929,7 +941,7 @@ echo "  Emulator: Mednafen"
 echo "  Raw H40:  320x224"
 echo "  Raw H32:  256x224 within the 320x224 presentation surface"
 echo "  Gamescope output: 1280x896"
-echo "  Audio: direct ALSA device derived from current PulseAudio sink"
+echo "  Audio: BareFront-selected HDMI -> direct ALSA / 48 kHz / 20 ms"
 echo "  Esc: direct return to BareFront"
 echo
 echo "Mega Drive stage complete."
@@ -3957,6 +3969,10 @@ else
     echo "  This is not treated as a fatal installer error."
 fi
 
+if ! command -v pactl >/dev/null 2>&1; then
+    die "SNES HDMI sink routing requires pactl."
+fi
+
 # ------------------------------------------------------------
 # BareFront bsnes baseline
 #
@@ -3964,7 +3980,7 @@ fi
 # predictable SNES presentation:
 #   - raw, unfiltered 256x224 emulator output
 #   - neutral colour/gamma handling
-#   - stable ALSA audio
+#   - stable PulseAudio routed to BareFront-selected HDMI
 #   - no bsnes status bar
 #   - Esc exits directly to BareFront
 #   - saves/states remain under BareFront
@@ -4060,9 +4076,11 @@ ensure("Video", "Saturation", "100")
 ensure("Video", "Gamma", "100")
 ensure("Video", "Dimming", "false")
 
-ensure("Audio", "Driver", "ALSA")
-ensure("Audio", "Device", "default")
+ensure("Audio", "Driver", "PulseAudio")
+ensure("Audio", "Device", "Default")
 ensure("Audio", "Blocking", "true")
+ensure("Audio", "Frequency", "48000")
+ensure("Audio", "Latency", "40")
 
 ensure("General", "StatusBar", "false")
 
@@ -4074,7 +4092,7 @@ echo "BareFront bsnes integration:"
 echo "  Video: raw / unfiltered"
 echo "  Gamma: 100"
 echo "  Dimming: false"
-echo "  Audio: ALSA default"
+echo "  Audio: PulseAudio -> BareFront-selected HDMI / 48 kHz / 40 ms"
 echo "  Status bar: disabled"
 echo "  Esc: exit directly to BareFront"
 echo "  SRAM saves: $BSNES_SAVE_DIR/"
@@ -4572,6 +4590,14 @@ if [[ ! -x "$MEDNAFEN_PCE_LAUNCHER" ]]; then
     die "PC Engine launcher is not executable."
 fi
 
+if ! command -v pactl >/dev/null 2>&1; then
+    die "PC Engine direct-HDMI audio requires pactl."
+fi
+
+if ! command -v pasuspender >/dev/null 2>&1; then
+    die "PC Engine direct-HDMI audio requires pasuspender."
+fi
+
 if ! command -v xrandr >/dev/null 2>&1; then
     die "PC Engine presentation requires xrandr."
 fi
@@ -4714,6 +4740,7 @@ echo "  vkBasalt Vulkan layer: OK"
 echo "  BareCRT shader: OK"
 echo "  PC Engine overlay: OK"
 echo "  Screenshot/video folders: OK"
+echo "  Audio: BareFront-selected HDMI -> direct ALSA / 48 kHz / 20 ms"
 echo
 echo "BareFront-owned controls:"
 echo "  Esc = return directly to BareFront"
@@ -4747,7 +4774,7 @@ if [[ ! -x "$MEDNAFEN_SATURN_GAMESCOPE" ]]; then
 fi
 
 if ! command -v pactl >/dev/null 2>&1; then
-    die "pactl is required for Saturn audio-device resolution."
+    die "Saturn direct-HDMI audio requires pactl."
 fi
 
 if ! command -v pasuspender >/dev/null 2>&1; then
