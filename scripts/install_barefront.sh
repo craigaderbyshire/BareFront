@@ -4180,6 +4180,167 @@ def ensure(section, key, value):
     lines.insert(section_end, f"  {key}: {value}")
 
 
+def seed_xbox_gamepad():
+    global lines
+
+    mapping = {
+        "Up":     "0x45e0b12/1/1/Lo",
+        "Down":   "0x45e0b12/1/1/Hi",
+        "Left":   "0x45e0b12/1/0/Lo",
+        "Right":  "0x45e0b12/1/0/Hi",
+        "B":      "0x45e0b12/3/0",
+        "A":      "0x45e0b12/3/1",
+        "Y":      "0x45e0b12/3/2",
+        "X":      "0x45e0b12/3/3",
+        "L":      "0x45e0b12/3/4",
+        "R":      "0x45e0b12/3/5",
+        "Select": "0x45e0b12/3/6",
+        "Start":  "0x45e0b12/3/7",
+    }
+
+    def mapped_gamepad_lines():
+        result = [
+            "  ControllerPort1: Gamepad",
+            "    Gamepad",
+        ]
+
+        for key, value in mapping.items():
+            result.append(f"      {key}: {value}")
+
+        return result
+
+    # --------------------------------------------------------
+    # Fresh configuration:
+    # create the Super Famicom / Port 1 structure ourselves.
+    # --------------------------------------------------------
+
+    try:
+        system_index = lines.index("SuperFamicom")
+    except ValueError:
+        if lines and lines[-1] != "":
+            lines.append("")
+
+        lines.append("SuperFamicom")
+        lines.extend(mapped_gamepad_lines())
+        return
+
+    # Find the end of the SuperFamicom top-level section.
+    system_end = len(lines)
+
+    for i in range(system_index + 1, len(lines)):
+        line = lines[i]
+
+        if line and not line[0].isspace():
+            system_end = i
+            break
+
+    # --------------------------------------------------------
+    # Existing SuperFamicom section but no Port 1:
+    # treat it as unconfigured and add our baseline.
+    # --------------------------------------------------------
+
+    port_index = None
+
+    for i in range(system_index + 1, system_end):
+        if lines[i] == "  ControllerPort1: Gamepad":
+            port_index = i
+            break
+
+    if port_index is None:
+        lines[system_end:system_end] = mapped_gamepad_lines()
+        return
+
+    # Find the end of ControllerPort1.
+    port_end = system_end
+
+    for i in range(port_index + 1, system_end):
+        line = lines[i]
+
+        if not line:
+            continue
+
+        indent = len(line) - len(line.lstrip())
+
+        if indent <= 2:
+            port_end = i
+            break
+
+    # --------------------------------------------------------
+    # Existing Port 1 but no Gamepad subsection:
+    # also treat this as unconfigured.
+    # --------------------------------------------------------
+
+    gamepad_index = None
+
+    for i in range(port_index + 1, port_end):
+        if lines[i] == "    Gamepad":
+            gamepad_index = i
+            break
+
+    if gamepad_index is None:
+        block = ["    Gamepad"]
+
+        for key, value in mapping.items():
+            block.append(f"      {key}: {value}")
+
+        lines[port_end:port_end] = block
+        return
+
+    # Find the end of the Gamepad subsection.
+    gamepad_end = port_end
+
+    for i in range(gamepad_index + 1, port_end):
+        line = lines[i]
+
+        if not line:
+            continue
+
+        indent = len(line) - len(line.lstrip())
+
+        if indent <= 4:
+            gamepad_end = i
+            break
+
+    control_lines = {}
+
+    for i in range(gamepad_index + 1, gamepad_end):
+        line = lines[i]
+
+        if not line.startswith("      "):
+            continue
+
+        stripped = line.strip()
+
+        if ":" in stripped:
+            key, value = stripped.split(":", 1)
+            value = value.strip()
+        else:
+            key = stripped
+            value = ""
+
+        if key in mapping:
+            control_lines[key] = (i, value)
+
+    # An unexpected or incomplete native layout is left alone.
+    if set(control_lines) != set(mapping):
+        return
+
+    # Existing mappings belong to the user/emulator.
+    # If even one normal gameplay control is assigned,
+    # preserve the complete Port 1 mapping unchanged.
+    if any(value for _, value in control_lines.values()):
+        return
+
+    # Complete native gamepad exists and all normal controls
+    # are unassigned: seed BareFront's Xbox-layout baseline.
+    for key, value in mapping.items():
+        i, _ = control_lines[key]
+        lines[i] = f"      {key}: {value}"
+
+
+seed_xbox_gamepad()
+
+
 ensure("Path", "Saves", f"{save_dir}/")
 ensure("Path", "States", f"{state_dir}/")
 
