@@ -3171,6 +3171,32 @@ else
 fi
 
 
+# Xbox Series X controller baseline.
+# Install only when absent; never overwrite a user's Flycast mapping.
+FLYCAST_XBOX_MAPPING_SOURCE="$BAREFRONT_DIR/assets/config/flycast/SDL_Xbox Series X Controller.cfg"
+FLYCAST_XBOX_MAPPING="$FLYCAST_MAPPING_DIR/SDL_Xbox Series X Controller.cfg"
+
+if [[ ! -f "$FLYCAST_XBOX_MAPPING" ]]; then
+
+    [[ -f "$FLYCAST_XBOX_MAPPING_SOURCE" ]] ||
+        die "Bundled Flycast Xbox controller mapping is missing."
+
+    install -m 0644 "$FLYCAST_XBOX_MAPPING_SOURCE" "$FLYCAST_XBOX_MAPPING"
+
+    echo "  Flycast Xbox controller baseline: CREATED"
+
+else
+
+    echo "  Flycast Xbox controller mapping already exists: PRESERVED"
+
+    if ! grep -Fq '11:btn_escape' "$FLYCAST_XBOX_MAPPING"; then
+        echo "  WARNING: existing Xbox mapping does not contain"
+        echo "           the tested Guide-to-Exit binding."
+    fi
+
+fi
+
+
 # BareFront-owned launcher adapter.
 # XDG_DATA_HOME routes VMU/NVRAM data into BareFront/saves.
 # Flycast renders a neutral 640x480 surface; Gamescope owns the
