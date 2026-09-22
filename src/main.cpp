@@ -1,6 +1,7 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 #include <SDL2/SDL_ttf.h>
+#include "shader_preferences.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -4454,6 +4455,26 @@ int main()
     bool useTatePreview =
         false;
 
+    // Shader selection is remembered per system.
+    const fs::path shaderPrefsPath =
+        "saves/presentation/shaders.ini";
+
+    bfshader::Preferences shaderPrefs =
+        bfshader::load(shaderPrefsPath);
+
+    const std::vector<std::string> shaderChoices =
+    {
+        "NONE",
+        "BARECRT",
+        "CRT-LITE",
+        "CRT-LOTTES"
+    };
+
+    bool shaderMenuOpen = false;
+    bool shaderMenuSaveFailed = false;
+    std::size_t shaderMenuSelected = 0;
+
+
 
     bool running =
         true;
@@ -4668,6 +4689,50 @@ int main()
 
             InputAction action =
                 InputAction::None;
+
+            // Open/close the shader popup without launching a game.
+            const bool shaderKey =
+                event.type == SDL_KEYDOWN &&
+                event.key.keysym.sym == SDLK_s &&
+                event.key.repeat == 0;
+
+            const bool shaderButton =
+                event.type == SDL_CONTROLLERBUTTONDOWN &&
+                controller &&
+                event.cbutton.which ==
+                    controllerInstanceId(controller) &&
+                event.cbutton.button == SDL_CONTROLLER_BUTTON_Y;
+
+            if (screen == Screen::Games &&
+                (shaderKey || shaderButton))
+            {
+                shaderMenuOpen = !shaderMenuOpen;
+                shaderMenuSaveFailed = false;
+
+                if (shaderMenuOpen)
+                {
+                    const std::string selected =
+                        bfshader::get(
+                            shaderPrefs,
+                            systems[activeSystemIndex].configSection
+                        );
+
+                    auto found = std::find(
+                        shaderChoices.begin(),
+                        shaderChoices.end(),
+                        selected
+                    );
+
+                    shaderMenuSelected =
+                        static_cast<std::size_t>(
+                            found - shaderChoices.begin()
+                        );
+                }
+
+                playSoundEffect(clickSound);
+                continue;
+            }
+
 
 
             // ----------------------------------------------
@@ -5242,7 +5307,59 @@ int main()
                     false;
 
 
-                switch (action)
+
+                if (shaderMenuOpen)
+                {
+                    switch (action)
+                    {
+                        case InputAction::Up:
+                            if (shaderMenuSelected > 0)
+                                --shaderMenuSelected;
+                            playSoundEffect(clickSound);
+                            break;
+
+                        case InputAction::Down:
+                            if (shaderMenuSelected + 1 <
+                                shaderChoices.size())
+                                ++shaderMenuSelected;
+                            playSoundEffect(clickSound);
+                            break;
+
+                        case InputAction::Select:
+                            if (bfshader::set(
+                                    shaderPrefs,
+                                    shaderPrefsPath,
+                                    systems[activeSystemIndex].configSection,
+                                    shaderChoices[shaderMenuSelected]))
+                            {
+                                shaderMenuOpen = false;
+                                shaderMenuSaveFailed = false;
+                            }
+                            else
+                            {
+                                shaderMenuSaveFailed = true;
+                                std::cerr
+                                    << "Could not save shader preference\n";
+                            }
+                            playSoundEffect(clickSound);
+                            break;
+
+                        case InputAction::Back:
+                            shaderMenuOpen = false;
+                            playSoundEffect(clickSound);
+                            break;
+
+                        case InputAction::Quit:
+                            running = false;
+                            break;
+
+                        default:
+                            break;
+                    }
+                }
+                else
+                {
+switch (action)
                 {
                     case InputAction::Up:
 
@@ -5602,6 +5719,7 @@ int main()
 
                     case InputAction::None:
                         break;
+                }
                 }
 
 
@@ -6355,6 +6473,106 @@ int main()
         // --------------------------------------------------
         // Display completed frame
         // --------------------------------------------------
+
+
+        // Shader selector overlays the game list and CRT preview.
+        if (screen == Screen::Games && shaderMenuOpen)
+        {
+            SDL_BlendMode previousBlend = SDL_BLENDMODE_NONE;
+            SDL_GetRenderDrawBlendMode(renderer, &previousBlend);
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 205);
+            SDL_Rect scrim = {0, 0, SCREEN_WIDTH, SCREEN_HEIGHT};
+            SDL_RenderFillRect(renderer, &scrim);
+
+            // Hide the underlying game-screen footer completely.
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_Rect footerMask =
+            {
+                0, 645, SCREEN_WIDTH, SCREEN_HEIGHT - 645
+            };
+            SDL_RenderFillRect(renderer, &footerMask);
+
+            // The popup itself must be fully opaque.
+            SDL_Rect panel = {180, 120, 920, 480};
+            SDL_SetRenderDrawColor(renderer, 25, 25, 25, 255);
+            SDL_RenderFillRect(renderer, &panel);
+
+            SDL_SetRenderDrawColor(renderer, 125, 125, 125, 255);
+            SDL_RenderDrawRect(renderer, &panel);
+
+            SDL_Rect heading = {205, 145, 870, 55};
+            drawTextCentered(
+                renderer, gameTitleFont,
+                "SHADER PRESET", heading, white
+            );
+
+            SDL_Rect systemHeading = {205, 205, 870, 35};
+            drawTextCentered(
+                renderer, gameFont,
+                systems[activeSystemIndex].screenTitle,
+                systemHeading, grey
+            );
+
+            for (std::size_t index = 0;
+                 index < shaderChoices.size();
+                 ++index)
+            {
+                SDL_Rect option =
+                {
+                    220,
+                    260 + static_cast<int>(index) * 68,
+                    840,
+                    60
+                };
+
+                if (index == shaderMenuSelected)
+                {
+                    SDL_SetRenderDrawColor(
+                        renderer, 75, 75, 75, 255
+                    );
+                    SDL_RenderFillRect(renderer, &option);
+                }
+
+                drawTextCentered(
+                    renderer, gameFont,
+                    shaderChoices[index], option, white
+                );
+            }
+
+            if (shaderMenuSaveFailed)
+            {
+                SDL_Rect errorArea = {205, 540, 870, 35};
+
+                drawTextCentered(
+                    renderer, gameFont,
+                    "SAVE FAILED - CHECK PERMISSIONS",
+                    errorArea, white
+                );
+            }
+            else
+            {
+                SDL_Rect selectArea = {215, 540, 420, 35};
+                SDL_Rect cancelArea = {645, 540, 420, 35};
+
+                drawTextCentered(
+                    renderer, gameFont,
+                    "A / ENTER SELECT",
+                    selectArea, grey
+                );
+
+                drawTextCentered(
+                    renderer, gameFont,
+                    "B / ESC CANCEL",
+                    cancelArea, grey
+                );
+            }
+
+            SDL_SetRenderDrawBlendMode(
+                renderer, previousBlend
+            );
+        }
 
         SDL_RenderPresent(
             renderer

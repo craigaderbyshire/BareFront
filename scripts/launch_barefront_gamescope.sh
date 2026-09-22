@@ -63,4 +63,8 @@ echo "Starting BareFront directly..."
 echo "  Display: ${DISPLAY}"
 echo "  Gameplay presentation: per-game Gamescope"
 
+# Resolve relative assets, configuration and saved preferences
+# from the BareFront installation directory.
+cd "$ROOT"
+
 exec "$BAREFRONT"

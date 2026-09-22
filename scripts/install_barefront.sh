@@ -3174,89 +3174,23 @@ fi
 # BareFront-owned launcher adapter.
 # XDG_DATA_HOME routes VMU/NVRAM data into BareFront/saves.
 # Flycast renders a neutral 640x480 surface; Gamescope owns the
-# 2x integer nearest presentation and BareCRT remains external.
+# 2x integer nearest presentation; the selected shader remains external.
+if [[ ! -x "$BAREFRONT_DIR/scripts/launch_flycast.sh" ]]; then
+    die "Tracked Flycast launcher is missing or not executable."
+fi
+
+if [[ ! -f "$BAREFRONT_DIR/scripts/flycast_shader_activate.py" ]]; then
+    die "Flycast shader activation helper is missing."
+fi
+
+# Compatibility adapter. The implementation is tracked under scripts/.
+# Keep this path stable for existing barefront.ini installations.
 cat > "$FLYCAST_LAUNCHER" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ROM="${1:-}"
-
-FLYCAST="$ROOT/emulators/flycast/Flycast.AppImage"
-GAMESCOPE="/usr/games/gamescope"
-
-NATIVE_WIDTH=640
-NATIVE_HEIGHT=480
-INTEGER_SCALE=2
-OUTPUT_WIDTH=1280
-OUTPUT_HEIGHT=960
-
-if [[ -z "$ROM" ]]; then
-    echo "Usage: launch_flycast.sh <rom>" >&2
-    exit 1
-fi
-
-if [[ ! -f "$ROM" ]]; then
-    echo "Dreamcast ROM not found: $ROM" >&2
-    exit 1
-fi
-
-if [[ ! -x "$FLYCAST" ]]; then
-    echo "Flycast executable not found: $FLYCAST" >&2
-    exit 1
-fi
-
-if [[ ! -x "$GAMESCOPE" ]]; then
-    echo "Gamescope executable not found: $GAMESCOPE" >&2
-    exit 1
-fi
-
-if [[ ! -f "$ROOT/assets/shaders/barecrt/BareCRT_v2.fx" ]]; then
-    echo "BareCRT shader not found." >&2
-    exit 1
-fi
-
-mkdir -p "$ROOT/saves/dreamcast"
-
-export XDG_DATA_HOME="$ROOT/saves/dreamcast"
-
-if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
-    export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-fi
-
-VKBASALT_CONFIG="/tmp/barefront-vkbasalt-dreamcast.conf"
-
-cat > "$VKBASALT_CONFIG" <<EOF2
-effects = barecrt
-barecrt = $ROOT/assets/shaders/barecrt/BareCRT_v2.fx
-reshadeIncludePath = $ROOT/assets/shaders/barecrt
-reshadeTexturePath = $ROOT/assets/shaders/barecrt
-enableOnLaunch = True
-toggleKey = F8
-BareFrontScale = 2.0
-EOF2
-
-echo "Starting Dreamcast through per-game Gamescope..."
-echo "  Native:      ${NATIVE_WIDTH}x${NATIVE_HEIGHT}"
-echo "  Integer:     ${INTEGER_SCALE}x"
-echo "  Output:      ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}"
-echo "  Filter:      nearest"
-echo "  BareCRT:     enabled"
-
-exec env \
-    ENABLE_VKBASALT=1 \
-    VKBASALT_CONFIG_FILE="$VKBASALT_CONFIG" \
-    "$GAMESCOPE" \
-        -b \
-        -g \
-        -w "$NATIVE_WIDTH" \
-        -h "$NATIVE_HEIGHT" \
-        -W "$OUTPUT_WIDTH" \
-        -H "$OUTPUT_HEIGHT" \
-        -S integer \
-        -F nearest \
-        -- \
-        "$FLYCAST" "$ROM"
+exec "$ROOT/scripts/launch_flycast.sh" "$@"
 EOF
 
 chmod +x "$FLYCAST_LAUNCHER"
