@@ -232,6 +232,7 @@ GRAPHICS_PACKAGES=(
     x11-xserver-utils
     libfuse2t64
     libx11-dev
+    libxtst-dev
     libxi-dev
     libxfixes-dev
     libxrender-dev
@@ -961,6 +962,8 @@ MESEN_SMS_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mesen_sms.sh"
 MESEN_SMS_OVERLAY="$BAREFRONT_DIR/assets/overlays/mastersystem.png"
 MESEN_MENU_NUDGE_SOURCE="$BAREFRONT_DIR/src/mesen_menu_nudge_helper.cpp"
 MESEN_MENU_NUDGE_HELPER="$MESEN_DIR/mesen_menu_nudge_helper"
+MESEN_GUIDE_EXIT_SOURCE="$BAREFRONT_DIR/src/mesen_guide_exit_helper.cpp"
+MESEN_GUIDE_EXIT_HELPER="$MESEN_DIR/mesen_guide_exit_helper"
 
 # BareFront-tested MesenCE release.
 MESEN_VERSION="2.2.1"
@@ -1258,6 +1261,33 @@ fi
 
 if [[ ! -x "$MESEN_MENU_NUDGE_HELPER" ]]; then
     die "Mesen menu nudge helper build failed."
+fi
+
+if [[ ! -f "$MESEN_GUIDE_EXIT_SOURCE" ]]; then
+    die "Mesen Guide exit helper source is missing."
+fi
+
+if [[ ! -x "$MESEN_GUIDE_EXIT_HELPER" ]] || \
+   [[ "$MESEN_GUIDE_EXIT_SOURCE" -nt "$MESEN_GUIDE_EXIT_HELPER" ]]
+then
+    echo
+    echo "Building Mesen Guide exit helper..."
+
+    g++ -std=c++17 -O2 \
+        "$MESEN_GUIDE_EXIT_SOURCE" \
+        -o "$MESEN_GUIDE_EXIT_HELPER" \
+        $(sdl2-config --cflags --libs) \
+        -lX11 -lXtst
+
+    echo "Action: BUILD"
+else
+    echo
+    echo "Mesen Guide exit helper is already current."
+    echo "Action: SKIP"
+fi
+
+if [[ ! -x "$MESEN_GUIDE_EXIT_HELPER" ]]; then
+    die "Mesen Guide exit helper build failed."
 fi
 
 echo

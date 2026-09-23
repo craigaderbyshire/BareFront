@@ -4475,7 +4475,7 @@ int main()
     // keeping the actual disc path for emulator launching.
     auto currentPreviewArtwork = [&]() -> fs::path
     {
-        if (systems[activeSystemIndex].configSection != "dreamcast" ||
+        if (curatedFavouritesPath.empty() ||
             gameSelected >= curatedVisibleGames.size() ||
             !curatedVisibleGames[gameSelected].game.folderGame)
             return {};
@@ -5240,7 +5240,7 @@ int main()
                         activeSystemIndex =
                             globalIndex;
 
-                        // Prepare the curated Dreamcast catalogue
+                        // Prepare curated catalogues for supported systems.
                         // before entering the Collections screen.
                         curatedCollections.clear();
                         curatedVisibleGames.clear();
@@ -5250,14 +5250,15 @@ int main()
                         curatedCollectionSelected = 0;
                         curatedFavouritesPath.clear();
 
-                        if (systems[activeSystemIndex].configSection ==
-                            "dreamcast")
+                        if (systems[activeSystemIndex].configSection == "dreamcast" ||
+                             systems[activeSystemIndex].configSection == "nes")
                         {
                             curatedCollectionNames =
-                                bflibrary::collectionNames("dreamcast");
+                                bflibrary::collectionNames(systems[activeSystemIndex].configSection);
 
                             curatedFavouritesPath =
-                                "saves/presentation/favourites/dreamcast.txt";
+                                fs::path("saves/presentation/favourites") /
+                                  (systems[activeSystemIndex].configSection + ".txt");
 
                             curatedFavourites =
                                 bffavourites::load(curatedFavouritesPath);
@@ -5289,7 +5290,7 @@ int main()
                                 });
 
                                 std::cout
-                                    << "Dreamcast collection: "
+                                    << systems[activeSystemIndex].configSection << " collection: "
                                     << name << " — "
                                     << curatedCollections.back()
                                            .games.size()
@@ -5389,11 +5390,11 @@ int main()
 
 
                         screen =
-                            (activeSection == "dreamcast")
+                            ((activeSection == "dreamcast" || activeSection == "nes"))
                                 ? Screen::Collections
                                 : Screen::Games;
 
-                        if (activeSection == "dreamcast")
+                        if ((activeSection == "dreamcast" || activeSection == "nes"))
                         {
                             // The Collections screen needs no game preview.
                             videoPlayer.stop();
@@ -5589,7 +5590,7 @@ switch (action)
                 {
                     case InputAction::Favourite:
                     {
-                        if (systems[activeSystemIndex].configSection != "dreamcast" ||
+                        if (curatedFavouritesPath.empty() ||
                             gameSelected >= curatedVisibleGames.size())
                             break;
 
@@ -5978,8 +5979,7 @@ switch (action)
                         videoPlayer.stop();
 
                         screen =
-                            (systems[activeSystemIndex].configSection ==
-                             "dreamcast")
+                            (!curatedFavouritesPath.empty())
                                 ? Screen::Collections
                                 : Screen::Home;
 
@@ -6584,14 +6584,13 @@ switch (action)
             const int gameTextWidth =
                 610;
 
-            const bool dreamcastGameList =
-                systems[activeSystemIndex].configSection == "dreamcast";
+            const bool curatedGameList = !curatedFavouritesPath.empty();
 
             const int highlightX =
-                dreamcastGameList ? 56 : 45;
+                curatedGameList ? 56 : 45;
 
             const int highlightWidth =
-                dreamcastGameList ? 629 : 640;
+                curatedGameList ? 629 : 640;
 
             const int listStartY =
                 144;
@@ -6632,9 +6631,9 @@ switch (action)
 
             SDL_Rect listClip =
             {
-                dreamcastGameList ? 20 : 45,
+                curatedGameList ? 20 : 45,
                 138,
-                dreamcastGameList ? 665 : 640,
+                curatedGameList ? 665 : 640,
                 visibleGames *
                     lineHeight
             };
@@ -6711,7 +6710,7 @@ switch (action)
 
 
                 const bool favouriteMarked =
-                    systems[activeSystemIndex].configSection == "dreamcast" &&
+                    !curatedFavouritesPath.empty() &&
                     gameIndex < static_cast<int>(curatedVisibleGames.size()) &&
                     curatedVisibleGames[gameIndex].favourite;
 
