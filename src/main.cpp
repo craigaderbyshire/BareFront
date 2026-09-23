@@ -2,6 +2,7 @@
 #include <SDL2/SDL_image.h>
 #include <SDL2/SDL_ttf.h>
 #include "shader_preferences.h"
+#include "curated_library.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -1712,8 +1713,12 @@ void refreshGamePreview(
     SDL_Texture*& screenshotTexture,
     bool& useTatePreview,
     const System& system,
-    const fs::path& game)
+    const fs::path& game,
+    const fs::path& artworkIdentity = {})
 {
+    const fs::path& artworkGame =
+        artworkIdentity.empty() ? game : artworkIdentity;
+
     useTatePreview =
         determineTatePreview(
             system,
@@ -1736,14 +1741,18 @@ void refreshGamePreview(
         loadScreenshot(
             renderer,
             system.screenshotFolder,
-            game
+            artworkGame
         );
 
+    if (!screenshotTexture && artworkGame != game)
+        screenshotTexture = loadScreenshot(
+            renderer, system.screenshotFolder, game);
+
     fs::path videoPath =
-        findVideo(
-            system,
-            game
-        );
+        findVideo(system, artworkGame);
+
+    if (videoPath.empty() && artworkGame != game)
+        videoPath = findVideo(system, game);
 
     if (!videoPath.empty())
     {
@@ -3614,6 +3623,7 @@ enum class InputAction
     Down,
     Select,
     Back,
+    Favourite,
     Quit
 };
 
@@ -3746,6 +3756,7 @@ SDL_JoystickID controllerInstanceId(
 enum class Screen
 {
     Home,
+    Collections,
     Games
 };
 
@@ -4441,8 +4452,36 @@ int main()
     int activeSystemIndex =
         0;
 
+    // Curated collections and virtual favourites.
+    std::vector<bflibrary::Collection>
+        curatedCollections;
+
+    std::vector<bflibrary::ListedGame>
+        curatedVisibleGames;
+
+    std::vector<std::string>
+        curatedCollectionNames;
+
+    std::size_t curatedCollectionSelected = 0;
+    std::string curatedActiveCollection;
+
+    bffavourites::Entries curatedFavourites;
+    fs::path curatedFavouritesPath;
+
     std::size_t gameSelected =
         0;
+
+    // Use a multi-disc folder name for artwork, while
+    // keeping the actual disc path for emulator launching.
+    auto currentPreviewArtwork = [&]() -> fs::path
+    {
+        if (systems[activeSystemIndex].configSection != "dreamcast" ||
+            gameSelected >= curatedVisibleGames.size() ||
+            !curatedVisibleGames[gameSelected].game.folderGame)
+            return {};
+
+        return curatedVisibleGames[gameSelected].game.titlePath;
+    };
 
     Uint32 selectedSince =
         SDL_GetTicks();
@@ -4778,6 +4817,10 @@ int main()
                                 : InputAction::Back;
                         break;
 
+                    case SDLK_f:
+                        action = InputAction::Favourite;
+                        break;
+
                     case SDLK_q:
                         action =
                             InputAction::Quit;
@@ -4828,6 +4871,10 @@ int main()
                     case SDL_CONTROLLER_BUTTON_A:
                         action =
                             InputAction::Select;
+                        break;
+
+                    case SDL_CONTROLLER_BUTTON_X:
+                        action = InputAction::Favourite;
                         break;
 
                     case SDL_CONTROLLER_BUTTON_B:
@@ -5193,6 +5240,64 @@ int main()
                         activeSystemIndex =
                             globalIndex;
 
+                        // Prepare the curated Dreamcast catalogue
+                        // before entering the Collections screen.
+                        curatedCollections.clear();
+                        curatedVisibleGames.clear();
+                        curatedCollectionNames.clear();
+                        curatedFavourites.clear();
+                        curatedActiveCollection.clear();
+                        curatedCollectionSelected = 0;
+                        curatedFavouritesPath.clear();
+
+                        if (systems[activeSystemIndex].configSection ==
+                            "dreamcast")
+                        {
+                            curatedCollectionNames =
+                                bflibrary::collectionNames("dreamcast");
+
+                            curatedFavouritesPath =
+                                "saves/presentation/favourites/dreamcast.txt";
+
+                            curatedFavourites =
+                                bffavourites::load(curatedFavouritesPath);
+
+                            for (const std::string& name :
+                                 curatedCollectionNames)
+                            {
+                                // Favourites is virtual, not a ROM folder.
+                                if (name == "Favourites")
+                                    continue;
+
+                                const fs::path collectionFolder =
+                                    systems[activeSystemIndex].romFolder /
+                                    name;
+
+                                const auto scanned =
+                                    scanGames(
+                                        collectionFolder,
+                                        systems[activeSystemIndex]
+                                            .romExtensions
+                                    );
+
+                                curatedCollections.push_back({
+                                    name,
+                                    bflibrary::groupGames(
+                                        collectionFolder,
+                                        scanned
+                                    )
+                                });
+
+                                std::cout
+                                    << "Dreamcast collection: "
+                                    << name << " — "
+                                    << curatedCollections.back()
+                                           .games.size()
+                                    << " games\n";
+                            }
+                        }
+
+
                         games =
                             scanGames(
                                 systems[activeSystemIndex].romFolder,
@@ -5277,13 +5382,32 @@ int main()
                                 screenshotTexture,
                                 useTatePreview,
                                 systems[activeSystemIndex],
-                                games[gameSelected]
+                                games[gameSelected],
+                                currentPreviewArtwork()
                             );
                         }
 
 
                         screen =
-                            Screen::Games;
+                            (activeSection == "dreamcast")
+                                ? Screen::Collections
+                                : Screen::Games;
+
+                        if (activeSection == "dreamcast")
+                        {
+                            // The Collections screen needs no game preview.
+                            videoPlayer.stop();
+
+                            if (screenshotTexture)
+                            {
+                                SDL_DestroyTexture(screenshotTexture);
+                                screenshotTexture = nullptr;
+                            }
+
+                            games.clear();
+                            gameDisplayTitles.clear();
+                            gameSelected = 0;
+                        }
 
                         break;
                     }
@@ -5298,6 +5422,108 @@ int main()
             // ==================================================
             // GAME-LIST INPUT
             // ==================================================
+
+            else if (
+                screen ==
+                Screen::Collections)
+            {
+                switch (action)
+                {
+                    case InputAction::Up:
+                        if (curatedCollectionSelected > 0)
+                        {
+                            --curatedCollectionSelected;
+                            playSoundEffect(clickSound);
+                        }
+                        break;
+
+                    case InputAction::Down:
+                        if (curatedCollectionSelected + 1 <
+                            curatedCollectionNames.size())
+                        {
+                            ++curatedCollectionSelected;
+                            playSoundEffect(clickSound);
+                        }
+                        break;
+
+                    case InputAction::Select:
+                    {
+                        if (curatedCollectionNames.empty())
+                            break;
+
+                        curatedActiveCollection =
+                            curatedCollectionNames[
+                                curatedCollectionSelected
+                            ];
+
+                        curatedVisibleGames =
+                            bflibrary::gamesFor(
+                                curatedCollections,
+                                curatedActiveCollection,
+                                curatedFavourites
+                            );
+
+                        games.clear();
+                        gameDisplayTitles.clear();
+
+                        for (const auto& entry :
+                             curatedVisibleGames)
+                        {
+                            games.push_back(
+                                entry.game.launchPath
+                            );
+
+                            gameDisplayTitles.push_back(
+                                cleanGameTitle(
+                                    entry.game.titlePath
+                                )
+                            );
+                        }
+
+                        gameSelected = 0;
+                        selectedSince = SDL_GetTicks();
+
+                        videoPlayer.stop();
+
+                        if (screenshotTexture)
+                        {
+                            SDL_DestroyTexture(screenshotTexture);
+                            screenshotTexture = nullptr;
+                        }
+
+                        useTatePreview = false;
+
+                        if (!games.empty())
+                        {
+                            refreshGamePreview(
+                                renderer,
+                                videoPlayer,
+                                screenshotTexture,
+                                useTatePreview,
+                                systems[activeSystemIndex],
+                                games[gameSelected],
+                                currentPreviewArtwork()
+                            );
+                        }
+
+                        screen = Screen::Games;
+                        playSoundEffect(clickSound);
+                        break;
+                    }
+
+                    case InputAction::Back:
+                        screen = Screen::Home;
+                        playSoundEffect(clickSound);
+                        break;
+
+                    case InputAction::Quit:
+                        running = false;
+                        break;
+
+                    default:
+                        break;
+                }
+            }
 
             else if (
                 screen ==
@@ -5361,6 +5587,68 @@ int main()
                 {
 switch (action)
                 {
+                    case InputAction::Favourite:
+                    {
+                        if (systems[activeSystemIndex].configSection != "dreamcast" ||
+                            gameSelected >= curatedVisibleGames.size())
+                            break;
+
+                        const auto& entry = curatedVisibleGames[gameSelected];
+                        const std::string key = bffavourites::gameKey(
+                            entry.collection, entry.game.key);
+
+                        auto updated = curatedFavourites;
+                        const bool removing = updated.erase(key) != 0;
+
+                        if (!removing)
+                            updated.insert(key);
+
+                        if (bffavourites::save(curatedFavouritesPath, updated))
+                        {
+                            curatedFavourites = updated;
+                            curatedVisibleGames[gameSelected].favourite = !removing;
+                            playSoundEffect(clickSound);
+                            if (curatedActiveCollection == "Favourites" &&
+                                removing)
+                            {
+                                curatedVisibleGames.erase(
+                                    curatedVisibleGames.begin() + gameSelected);
+                                games.erase(games.begin() + gameSelected);
+                                gameDisplayTitles.erase(
+                                    gameDisplayTitles.begin() + gameSelected);
+
+                                gameSelected = games.empty()
+                                    ? 0
+                                    : std::min(gameSelected, games.size() - 1);
+
+                                if (games.empty())
+                                {
+                                    videoPlayer.stop();
+
+                                    if (screenshotTexture)
+                                    {
+                                        SDL_DestroyTexture(screenshotTexture);
+                                        screenshotTexture = nullptr;
+                                    }
+
+                                    useTatePreview = false;
+                                }
+
+                                selectionChanged = true;
+                            }
+
+                            std::cout << (removing ? "Favourite removed: "
+                                                   : "Favourite added: ")
+                                      << key << '\n';
+                        }
+                        else
+                        {
+                            std::cerr << "Could not save favourite\n";
+                        }
+
+                        break;
+                    }
+
                     case InputAction::Up:
 
                         if (!games.empty() &&
@@ -5625,7 +5913,8 @@ switch (action)
                                 screenshotTexture,
                                 useTatePreview,
                                 systems[activeSystemIndex],
-                                games[gameSelected]
+                                games[gameSelected],
+                                currentPreviewArtwork()
                             );
 
 
@@ -5689,7 +5978,10 @@ switch (action)
                         videoPlayer.stop();
 
                         screen =
-                            Screen::Home;
+                            (systems[activeSystemIndex].configSection ==
+                             "dreamcast")
+                                ? Screen::Collections
+                                : Screen::Home;
 
 
                         if (screenshotTexture)
@@ -5737,7 +6029,8 @@ switch (action)
                             screenshotTexture,
                             useTatePreview,
                             systems[activeSystemIndex],
-                            games[gameSelected]
+                            games[gameSelected],
+                            currentPreviewArtwork()
                         );
                     }
                 }
@@ -6049,6 +6342,157 @@ switch (action)
         }
 
 
+
+        // ==================================================
+        // DRAW CURATED COLLECTIONS SCREEN
+        // ==================================================
+
+        else if (screen == Screen::Collections)
+        {
+            drawText(
+                renderer,
+                gameTitleFont,
+                systems[activeSystemIndex].screenTitle,
+                64, 12, white
+            );
+
+            drawText(
+                renderer,
+                gameFont,
+                "COLLECTIONS",
+                64, 96, grey
+            );
+
+            SDL_Rect systemArea = {
+                760, 1, 500, 250
+            };
+
+            drawSystemImage(
+                renderer,
+                systems[activeSystemIndex].texture,
+                systemArea
+            );
+
+            SDL_SetRenderDrawColor(
+                renderer, 80, 80, 80, 255
+            );
+
+            SDL_Rect divider = {
+                724, 120, 2, 500
+            };
+
+            SDL_RenderFillRect(renderer, &divider);
+
+            for (std::size_t index = 0;
+                 index < curatedCollectionNames.size();
+                 ++index)
+            {
+                const std::string& name =
+                    curatedCollectionNames[index];
+
+                const int y =
+                    158 + static_cast<int>(index) * 76;
+
+                if (index == curatedCollectionSelected)
+                {
+                    SDL_SetRenderDrawColor(
+                        renderer, 75, 75, 75, 220
+                    );
+
+                    SDL_Rect highlight = {
+                        45, y - 8, 640, 55
+                    };
+
+                    SDL_RenderFillRect(
+                        renderer, &highlight
+                    );
+                }
+
+                // Small red pixel heart for the virtual
+                // Favourites collection.
+                if (name == "Favourites")
+                {
+                    static const char* heart[] = {
+                        " ##   ## ",
+                        "#### ####",
+                        "#########",
+                        "#########",
+                        " ####### ",
+                        "  #####  ",
+                        "   ###   ",
+                        "    #    "
+                    };
+
+                    SDL_SetRenderDrawColor(
+                        renderer, 230, 54, 75, 255
+                    );
+
+                    for (int row = 0; row < 8; ++row)
+                    {
+                        for (int column = 0;
+                             column < 9;
+                             ++column)
+                        {
+                            if (heart[row][column] != '#')
+                                continue;
+
+                            SDL_Rect pixel = {
+                                65 + column * 4,
+                                y + row * 4,
+                                4, 4
+                            };
+
+                            SDL_RenderFillRect(
+                                renderer, &pixel
+                            );
+                        }
+                    }
+                }
+
+                drawText(
+                    renderer,
+                    gameFont,
+                    name,
+                    115,
+                    y,
+                    white
+                );
+
+                std::size_t count = 0;
+
+                if (name == "Favourites")
+                {
+                    count = bflibrary::gamesFor(
+                        curatedCollections,
+                        "Favourites",
+                        curatedFavourites
+                    ).size();
+                }
+                else
+                {
+                    for (const auto& collection :
+                         curatedCollections)
+                    {
+                        if (collection.name == name)
+                        {
+                            count = collection.games.size();
+                            break;
+                        }
+                    }
+                }
+
+                drawText(
+                    renderer,
+                    gameFont,
+                    std::to_string(count),
+                    605,
+                    y,
+                    white
+                );
+            }
+        }
+
+
         // ==================================================
         // DRAW CURRENT SYSTEM GAME SCREEN
         //
@@ -6140,11 +6584,14 @@ switch (action)
             const int gameTextWidth =
                 610;
 
+            const bool dreamcastGameList =
+                systems[activeSystemIndex].configSection == "dreamcast";
+
             const int highlightX =
-                45;
+                dreamcastGameList ? 56 : 45;
 
             const int highlightWidth =
-                640;
+                dreamcastGameList ? 629 : 640;
 
             const int listStartY =
                 144;
@@ -6185,9 +6632,9 @@ switch (action)
 
             SDL_Rect listClip =
             {
-                45,
+                dreamcastGameList ? 20 : 45,
                 138,
-                640,
+                dreamcastGameList ? 665 : 640,
                 visibleGames *
                     lineHeight
             };
@@ -6262,6 +6709,38 @@ switch (action)
                     );
                 }
 
+
+                const bool favouriteMarked =
+                    systems[activeSystemIndex].configSection == "dreamcast" &&
+                    gameIndex < static_cast<int>(curatedVisibleGames.size()) &&
+                    curatedVisibleGames[gameIndex].favourite;
+
+                if (favouriteMarked)
+                {
+                    static const char* heart[] = {
+                        " ##   ## ", "#### ####", "#########",
+                        "#########", " ####### ", "  #####  ",
+                        "   ###   ", "    #    "
+                    };
+
+                    SDL_SetRenderDrawColor(renderer, 230, 54, 75, 255);
+
+                    for (int heartRow = 0; heartRow < 8; ++heartRow)
+                    {
+                        for (int heartColumn = 0; heartColumn < 9; ++heartColumn)
+                        {
+                            if (heart[heartRow][heartColumn] != '#')
+                                continue;
+
+                            SDL_Rect pixel = {
+                                gameTextX - 40 + heartColumn * 3,
+                                y + 3 + heartRow * 3,
+                                3, 3
+                            };
+                            SDL_RenderFillRect(renderer, &pixel);
+                        }
+                    }
+                }
 
                 drawGameTitle(
                     renderer,

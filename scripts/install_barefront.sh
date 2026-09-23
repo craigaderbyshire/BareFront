@@ -3187,7 +3187,46 @@ if [[ ! -f "$FLYCAST_XBOX_MAPPING" ]]; then
 
 else
 
-    echo "  Flycast Xbox controller mapping already exists: PRESERVED"
+    # Upgrade only BareFront's exact previous Xbox mapping.
+    # Customised Flycast mappings must never be overwritten.
+    FLYCAST_OLD_XBOX_SHA256="b2f25c244ecd2d3694d4ff011374cbefee9b98254a2948ae52dffb80c30d503e"
+    FLYCAST_INSTALLED_XBOX_SHA256="$(
+        sha256sum "$FLYCAST_XBOX_MAPPING" | awk '{print $1}'
+    )"
+
+    if [[ "$FLYCAST_INSTALLED_XBOX_SHA256" == "$FLYCAST_OLD_XBOX_SHA256" ]]; then
+
+        [[ -f "$FLYCAST_XBOX_MAPPING_SOURCE" ]] ||
+            die "Bundled Flycast Xbox controller mapping is missing."
+
+        if grep -Fq '6:btn_menu' "$FLYCAST_XBOX_MAPPING_SOURCE" ||
+           ! grep -Fq '11:btn_escape' "$FLYCAST_XBOX_MAPPING_SOURCE"; then
+            die "Bundled Flycast Xbox controller mapping failed validation."
+        fi
+
+        FLYCAST_XBOX_MAPPING_BACKUP="$(
+            mktemp "${FLYCAST_XBOX_MAPPING}.pre-select-menu.XXXXXX"
+        )"
+
+        cp -p "$FLYCAST_XBOX_MAPPING" "$FLYCAST_XBOX_MAPPING_BACKUP" ||
+            die "Could not back up the previous Flycast Xbox mapping."
+
+        install -m 0644 "$FLYCAST_XBOX_MAPPING_SOURCE" "$FLYCAST_XBOX_MAPPING" ||
+            die "Could not migrate the Flycast Xbox mapping."
+
+        echo "  Flycast Xbox Select-menu mapping: MIGRATED"
+        echo "  Previous mapping: $FLYCAST_XBOX_MAPPING_BACKUP"
+
+    else
+
+        echo "  Flycast Xbox controller mapping already exists: PRESERVED"
+
+        if grep -Fq '6:btn_menu' "$FLYCAST_XBOX_MAPPING"; then
+            echo "  WARNING: existing custom mapping still assigns"
+            echo "           Select to the Flycast menu."
+        fi
+
+    fi
 
     if ! grep -Fq '11:btn_escape' "$FLYCAST_XBOX_MAPPING"; then
         echo "  WARNING: existing Xbox mapping does not contain"
@@ -6588,6 +6627,105 @@ else
     echo "  Production ROM paths: OK"
 
 fi
+
+
+# ------------------------------------------------------------
+# Flycast disc-insertion library
+#
+# Use the effective Dreamcast ROM path from the live BareFront
+# configuration. Preserve an existing non-empty Flycast path.
+# ------------------------------------------------------------
+
+python3 - "$CONFIG_FILE" "$FLYCAST_CONFIG" "$BAREFRONT_DIR" <<'PYFLYCASTCONTENT'
+from pathlib import Path
+import os
+import shutil
+import sys
+import tempfile
+
+barefront = Path(sys.argv[1])
+flycast = Path(sys.argv[2])
+root = Path(sys.argv[3])
+
+section = ""
+rom_paths = []
+
+for raw in barefront.read_text().splitlines():
+    line = raw.strip()
+
+    if line.startswith("[") and line.endswith("]"):
+        section = line
+    elif section == "[dreamcast]" and line.startswith("roms="):
+        rom_paths.append(line.split("=", 1)[1].strip())
+
+if len(rom_paths) != 1 or not rom_paths[0]:
+    print("  WARNING: Cannot determine the live Dreamcast ROM path.")
+    print("           Flycast content path left unchanged.")
+    raise SystemExit(0)
+
+rom_path = os.path.expanduser(rom_paths[0])
+
+if not os.path.isabs(rom_path):
+    rom_path = os.path.join(root, rom_path)
+
+rom_path = os.path.abspath(rom_path)
+
+original = flycast.read_text()
+lines = original.splitlines()
+
+matches = [
+    i for i, line in enumerate(lines)
+    if line.strip().startswith("Dreamcast.ContentPath")
+    and line.split("=", 1)[0].strip() == "Dreamcast.ContentPath"
+    and "=" in line
+]
+
+if len(matches) > 1:
+    print("  WARNING: Multiple Flycast content-path entries.")
+    print("           Existing config preserved.")
+    raise SystemExit(0)
+
+if matches:
+    index = matches[0]
+    current = lines[index].split("=", 1)[1].strip()
+
+    if current:
+        print("  Flycast content path: PRESERVED")
+        print(f"    {current}")
+        raise SystemExit(0)
+
+    prefix = lines[index].split("=", 1)[0]
+    lines[index] = f"{prefix}= {rom_path}"
+
+else:
+    headers = [
+        i for i, line in enumerate(lines)
+        if line.strip() == "[config]"
+    ]
+
+    if len(headers) != 1:
+        print("  WARNING: Flycast [config] section is ambiguous.")
+        print("           Existing config preserved.")
+        raise SystemExit(0)
+
+    lines.insert(
+        headers[0] + 1,
+        f"Dreamcast.ContentPath = {rom_path}"
+    )
+
+fd, backup = tempfile.mkstemp(
+    prefix="emu.cfg.pre-content-path.",
+    dir=flycast.parent
+)
+os.close(fd)
+shutil.copy2(flycast, backup)
+
+flycast.write_text("\n".join(lines) + "\n")
+
+print("  Flycast disc-insertion content path: CONFIGURED")
+print(f"    {rom_path}")
+print(f"  Previous Flycast config: {backup}")
+PYFLYCASTCONTENT
 
 
 # ------------------------------------------------------------
