@@ -7,6 +7,7 @@
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
+#include "c64_mask_validator.h"
 
 #include <csignal>
 #include <cstdint>
@@ -56,6 +57,13 @@ int main(
 {
     constexpr int WIDTH = 1920;
     constexpr int HEIGHT = 1080;
+
+    if (argc == 4 &&
+        std::strcmp(argv[1], "--validate-c64") == 0)
+    {
+        return validateC64Mask(argv[2], argv[3]);
+    }
+
 
 
     if (argc != 2)

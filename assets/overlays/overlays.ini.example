@@ -1,0 +1,30 @@
+# BareFront overlay choices
+# Paths are relative to assets/overlays/
+# Copy this file to overlays.ini and edit your copy.
+# Plain black is the default.
+#
+# Example custom selection:
+# snes=custom/my-snes.png
+
+megadrive=plain/megadrive.png
+nes=plain/nes.png
+snes=plain/snes.png
+ps1=plain/ps1.png
+ps2=plain/ps2.png
+mastersystem=plain/mastersystem.png
+atari2600=plain/atari2600.png
+dreamcast=plain/dreamcast.png
+saturn=plain/saturn.png
+pcengine=plain/pcengine.png
+jaguar=plain/jaguar.png
+gamecube=plain/gamecube.png
+
+# C64: uses its existing vkBasalt bezel shader, not an X11 overlay.
+# Custom C64 artwork must preserve the original transparency mask.
+c64=plain/c64.png
+
+# These systems have no fixed overlay by default.
+# Amiga fills the screen; Arcade and Neo Geo use dynamic presentation.
+amiga=none
+arcade=none
+neogeo=none

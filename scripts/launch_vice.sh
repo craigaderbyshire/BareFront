@@ -17,7 +17,7 @@ OUTPUT_HEIGHT=1080
 
 C64_PAL_MODE="1920x1080_C64PAL"
 
-BEZEL="$ROOT/assets/bezels/c64.png"
+BEZEL="$ROOT/assets/overlays/plain/c64.png"
 BEZEL_SHADER="$ROOT/assets/shaders/c64/BareFront_C64_Bezel.fx"
 BARECRT_SHADER="$ROOT/assets/shaders/barecrt/BareCRT_v2.fx"
 
@@ -25,6 +25,7 @@ VKBASALT_CONFIG="/tmp/barefront-vkbasalt-c64.conf"
 
 GAMESCOPE_PID=""
 PANELS_HIDDEN=0
+C64_TEXTURE_DIR=""
 
 DISPLAY_OUTPUT=""
 ORIGINAL_MODE=""
@@ -182,10 +183,72 @@ cleanup()
     fi
 
 
+    if [[ -n "$C64_TEXTURE_DIR" ]]; then
+        rm -rf -- "$C64_TEXTURE_DIR"
+    fi
+
     exit "$exit_code"
 }
 
 trap cleanup EXIT INT TERM
+
+# Select C64 artwork without opening a separate X11 overlay.
+OVERLAY_ROOT="$ROOT/assets/overlays"
+OVERLAY_MAP="$OVERLAY_ROOT/overlays.ini"
+DEFAULT_C64="$OVERLAY_ROOT/plain/c64.png"
+C64_SELECTION="plain/c64.png"
+
+if [[ ! -f "$OVERLAY_MAP" ]]; then
+    OVERLAY_MAP="$OVERLAY_ROOT/overlays.ini.example"
+fi
+
+if [[ -f "$OVERLAY_MAP" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%$'\r'}"
+        [[ "$line" == *=* ]] || continue
+
+        key="${line%%=*}"
+        value="${line#*=}"
+        key="${key//[[:space:]]/}"
+
+        if [[ "$key" == "c64" ]]; then
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            C64_SELECTION="$value"
+        fi
+    done < "$OVERLAY_MAP"
+fi
+
+case "$C64_SELECTION" in
+    /*|*..*|*\\*|!*.png)
+        echo "Invalid C64 overlay selection: $C64_SELECTION"
+        C64_SELECTION="plain/c64.png"
+        ;;
+esac
+
+C64_SELECTED="$OVERLAY_ROOT/$C64_SELECTION"
+C64_VALIDATOR="$ROOT/overlay_helper"
+
+# The reference mask must itself be valid and available.
+if [[ ! -f "$DEFAULT_C64" ]] ||
+   ! "$C64_VALIDATOR" --validate-c64 \
+       "$DEFAULT_C64" "$DEFAULT_C64"; then
+    echo "Required plain C64 texture or validator unavailable." >&2
+    exit 1
+fi
+
+if [[ ! -f "$C64_SELECTED" ]] ||
+   ! "$C64_VALIDATOR" --validate-c64 \
+       "$C64_SELECTED" "$DEFAULT_C64"; then
+    echo "Invalid or missing C64 artwork: $C64_SELECTED"
+    C64_SELECTED="$DEFAULT_C64"
+fi
+
+C64_TEXTURE_DIR="$(mktemp -d /tmp/barefront-c64-texture.XXXXXX)"
+cp -- "$C64_SELECTED" "$C64_TEXTURE_DIR/c64.png"
+
+echo "C64 overlay: $C64_SELECTED"
+echo "C64 texture directory: $C64_TEXTURE_DIR"
 
 
 
@@ -311,7 +374,7 @@ barecrt = $BARECRT_SHADER
 c64bezel = $BEZEL_SHADER
 
 reshadeIncludePath = $ROOT/assets/shaders/barecrt
-reshadeTexturePath = $ROOT/assets/bezels
+reshadeTexturePath = $C64_TEXTURE_DIR
 
 enableOnLaunch = True
 toggleKey = F8

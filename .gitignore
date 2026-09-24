@@ -33,3 +33,4 @@ core
 archive/
 assets/games/
 logs/
+/assets/overlays/overlays.ini

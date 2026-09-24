@@ -2167,22 +2167,242 @@ void launchGame(
         -1;
 
 
-    pid_t brandingOverlayHelperPid =
-        -1;
+
 
 
     const fs::path overlayHelper =
         "./overlay_helper";
 
 
-    const fs::path overlayArtwork =
-        fs::path("assets/overlays") /
-        (system.configSection + ".png");
+    // Plain-black overlay systems use their measured, protected
+    // gameplay apertures. The four exceptional systems retain
+    // their existing presentation until individually validated.
+    struct OverlaySpec
+    {
+        const char* name;
+        int x;
+        int y;
+        int width;
+        int height;
+    };
+
+    static constexpr OverlaySpec overlaySpecs[] =
+    {
+        {"atari2600",    320,  84, 1280, 912},
+        {"dreamcast",    320,  60, 1280, 960},
+        {"gamecube",     320,  60, 1280, 960},
+        {"jaguar",       320,  60, 1280, 960},
+        {"mastersystem", 448, 156, 1024, 768},
+        {"megadrive",    320,  92, 1280, 896},
+        {"nes",          448,  60, 1024, 960},
+        {"pcengine",     384,  76, 1152, 928},
+        {"ps1",          320,  60, 1280, 960},
+        {"ps2",          320,  60, 1280, 960},
+        {"saturn",       256,  60, 1408, 960},
+        {"snes",         448,  92, 1024, 896}
+    };
+
+    const OverlaySpec* overlaySpec = nullptr;
+
+    for (const auto& candidate : overlaySpecs)
+    {
+        if (system.configSection == candidate.name)
+        {
+            overlaySpec = &candidate;
+            break;
+        }
+    }
+
+    const fs::path overlayRoot =
+        "assets/overlays";
+
+    const fs::path defaultOverlayArtwork =
+        overlaySpec
+            ? overlayRoot / "plain" / (system.configSection + ".png")
+            : overlayRoot / (system.configSection + ".png");
+
+    fs::path overlayArtwork =
+        defaultOverlayArtwork;
+
+    if (overlaySpec)
+    {
+        fs::path mapping =
+            overlayRoot / "overlays.ini";
+
+        if (!fs::exists(mapping))
+        {
+            mapping =
+                overlayRoot / "overlays.ini.example";
+        }
+
+        std::ifstream selections(mapping);
+        std::string line;
+
+        const auto trim = [](std::string value)
+        {
+            const auto first =
+                value.find_first_not_of(" \t\r\n");
+
+            if (first == std::string::npos)
+            {
+                return std::string{};
+            }
+
+            const auto last =
+                value.find_last_not_of(" \t\r\n");
+
+            return value.substr(first, last - first + 1);
+        };
+
+        while (std::getline(selections, line))
+        {
+            line = trim(line);
+
+            if (line.empty() ||
+                line[0] == '#' ||
+                line[0] == ';')
+            {
+                continue;
+            }
+
+            const auto equals = line.find('=');
+
+            if (equals == std::string::npos ||
+                trim(line.substr(0, equals)) != system.configSection)
+            {
+                continue;
+            }
+
+            const fs::path relative(
+                trim(line.substr(equals + 1))
+            );
+
+            bool safe =
+                !relative.empty() &&
+                !relative.is_absolute() &&
+                relative.extension() == ".png";
+
+            for (const auto& part : relative)
+            {
+                if (part == "..")
+                {
+                    safe = false;
+                }
+            }
+
+            if (safe)
+            {
+                const fs::path candidate =
+                    overlayRoot / relative;
+
+                if (fs::is_regular_file(candidate))
+                {
+                    SDL_Surface* loaded =
+                        IMG_Load(candidate.string().c_str());
+
+                    if (loaded)
+                    {
+                        bool valid =
+                            loaded->w == 1920 &&
+                            loaded->h == 1080;
+
+                        SDL_Surface* rgba = nullptr;
+                        bool surfaceLocked = false;
+
+                        if (valid)
+                        {
+                            rgba = SDL_ConvertSurfaceFormat(
+                                loaded,
+                                SDL_PIXELFORMAT_RGBA32,
+                                0
+                            );
+
+                            valid = rgba != nullptr;
+                        }
+
+                        if (valid && SDL_MUSTLOCK(rgba))
+                        {
+                            surfaceLocked =
+                                SDL_LockSurface(rgba) == 0;
+                            valid = surfaceLocked;
+                        }
+
+                        if (valid)
+                        {
+                            // The complete native gameplay image must
+                            // remain unobscured by custom artwork.
+                            for (int y = overlaySpec->y;
+                                 y < overlaySpec->y + overlaySpec->height && valid;
+                                 ++y)
+                            {
+                                const auto* row =
+                                    reinterpret_cast<const Uint32*>(
+                                        static_cast<const Uint8*>(rgba->pixels) +
+                                        y * rgba->pitch
+                                    );
+
+                                for (int x = overlaySpec->x;
+                                     x < overlaySpec->x + overlaySpec->width;
+                                     ++x)
+                                {
+                                    Uint8 r, g, b, a;
+
+                                    SDL_GetRGBA(
+                                        row[x],
+                                        rgba->format,
+                                        &r, &g, &b, &a
+                                    );
+
+                                    if (a != 0)
+                                    {
+                                        valid = false;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (rgba)
+                        {
+                            if (surfaceLocked)
+                            {
+                                SDL_UnlockSurface(rgba);
+                            }
+
+                            SDL_FreeSurface(rgba);
+                        }
+
+                        SDL_FreeSurface(loaded);
+
+                        if (valid)
+                        {
+                            overlayArtwork = candidate;
+                        }
+                    }
+                }
+            }
+
+            if (overlayArtwork == defaultOverlayArtwork &&
+                relative != (fs::path("plain") /
+                             (system.configSection + ".png")))
+            {
+                std::cerr
+                    << "Invalid " << system.configSection
+                    << " overlay selection; "
+                    << "using plain default\n";
+            }
+
+            break;
+        }
+
+        std::cout
+            << system.configSection << " overlay: "
+            << overlayArtwork.string()
+            << "\n";
+    }
 
 
-    const fs::path brandingOverlayArtwork =
-        fs::path("assets/overlays/branding") /
-        (system.configSection + ".png");
+
 
 
     const char* gamescopeEnvironment =
@@ -2198,6 +2418,7 @@ void launchGame(
 
     if (
         gamescopeActive &&
+        overlaySpec != nullptr &&
         fs::exists(overlayArtwork)
     )
     {
@@ -2242,60 +2463,6 @@ void launchGame(
                 << "Overlay helper not found: "
                 << overlayHelper
                 << " (overlay disabled)\n";
-        }
-    }
-
-
-    // --------------------------------------------------
-    // Start the optional system branding layer.
-    //
-    // This is deliberately separate from the presentation
-    // bezel so the technically correct black surround remains
-    // untouched.  If no branding artwork exists for a system,
-    // presentation behaves exactly as before.
-    // --------------------------------------------------
-
-    if (
-        gamescopeActive &&
-        fs::exists(brandingOverlayArtwork)
-    )
-    {
-        if (fs::exists(overlayHelper))
-        {
-            brandingOverlayHelperPid =
-                fork();
-
-
-            if (brandingOverlayHelperPid == 0)
-            {
-                if (setpgid(0, 0) != 0)
-                {
-                    _exit(126);
-                }
-
-                execl(
-                    overlayHelper.c_str(),
-                    overlayHelper.c_str(),
-                    brandingOverlayArtwork.c_str(),
-                    static_cast<char*>(nullptr)
-                );
-
-                _exit(127);
-            }
-
-
-            if (brandingOverlayHelperPid < 0)
-            {
-                std::cerr
-                    << "Unable to start branding overlay helper\n";
-            }
-        }
-        else
-        {
-            std::cerr
-                << "Overlay helper not found: "
-                << overlayHelper
-                << " (branding overlay disabled)\n";
         }
     }
 
@@ -2540,24 +2707,7 @@ void launchGame(
     }
 
 
-    // Emulator has closed: remove the optional branding layer
-    // first, then the presentation overlay, before BareFront
-    // becomes visible again.
-    if (brandingOverlayHelperPid > 0)
-    {
-        kill(
-            brandingOverlayHelperPid,
-            SIGTERM
-        );
-
-        waitpid(
-            brandingOverlayHelperPid,
-            nullptr,
-            0
-        );
-    }
-
-
+    // Emulator has closed: remove the presentation overlay.
     if (overlayHelperPid > 0)
     {
         kill(
