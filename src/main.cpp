@@ -4025,6 +4025,28 @@ int main()
     }
 
 
+    // BareFront application icon.
+    // Missing artwork must never prevent the frontend starting.
+    SDL_Surface* windowIcon =
+        IMG_Load("assets/icons/barefront.png");
+
+    if (windowIcon)
+    {
+        SDL_SetWindowIcon(window, windowIcon);
+        SDL_FreeSurface(windowIcon);
+
+        std::cout
+            << "BareFront window icon: assets/icons/barefront.png\n";
+    }
+    else
+    {
+        std::cerr
+            << "Warning: BareFront window icon unavailable: "
+            << IMG_GetError()
+            << '\n';
+    }
+
+
     // --------------------------------------------------
     // Renderer
     // --------------------------------------------------

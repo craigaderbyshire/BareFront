@@ -7394,6 +7394,81 @@ echo "Stage 7 capture helper complete."
 
 
 # ============================================================
+# BAREFRONT DESKTOP INTEGRATION
+# ============================================================
+
+heading "BAREFRONT DESKTOP INTEGRATION"
+
+ICON_FILE="$BAREFRONT_DIR/assets/icons/barefront.png"
+APPLICATIONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+DESKTOP_FILE="$APPLICATIONS_DIR/barefront.desktop"
+
+if [[ ! -f "$ICON_FILE" ]]; then
+    die "BareFront application icon is missing: $ICON_FILE"
+fi
+
+if [[ ! -x "$BAREFRONT_BINARY" ]]; then
+    die "BareFront executable is missing: $BAREFRONT_BINARY"
+fi
+
+DESKTOP_WORK="$(mktemp -d "$LOG_DIR/barefront-desktop.XXXXXX")"
+DESKTOP_CANDIDATE="$DESKTOP_WORK/barefront.desktop"
+
+cat > "$DESKTOP_CANDIDATE" <<EOF
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=BareFront
+Comment=Curated emulator frontend
+Exec=$BAREFRONT_DIR/barefront
+Path=$BAREFRONT_DIR
+Icon=$ICON_FILE
+Terminal=false
+Categories=Game;
+StartupNotify=false
+EOF
+
+if command -v desktop-file-validate >/dev/null 2>&1; then
+    if ! desktop-file-validate "$DESKTOP_CANDIDATE"; then
+        die "Generated BareFront desktop entry failed validation."
+    fi
+fi
+
+mkdir -p "$APPLICATIONS_DIR"
+
+if [[ -e "$DESKTOP_FILE" || -L "$DESKTOP_FILE" ]]; then
+
+    if [[ ! -L "$DESKTOP_FILE" ]] &&
+       cmp -s "$DESKTOP_CANDIDATE" "$DESKTOP_FILE"; then
+
+        echo "BareFront desktop launcher already current."
+        echo "Action: SKIP"
+
+    else
+
+        echo "Existing BareFront desktop launcher differs."
+        echo "Preserving the user's existing launcher."
+        echo "Action: PRESERVE"
+
+    fi
+
+else
+
+    install -m 644 "$DESKTOP_CANDIDATE" "$DESKTOP_FILE"
+
+    echo "BareFront desktop launcher installed:"
+    echo "  $DESKTOP_FILE"
+    echo "Action: INSTALL"
+
+fi
+
+rm -rf -- "$DESKTOP_WORK"
+
+echo
+echo "BareFront desktop integration complete."
+
+
+# ============================================================
 # v0.12 checkpoint
 # ============================================================
 
