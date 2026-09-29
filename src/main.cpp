@@ -3,6 +3,10 @@
 #include <SDL2/SDL_ttf.h>
 #include "shader_preferences.h"
 #include "curated_library.h"
+#include "multidisc_launch_guard.h"
+#include "multidisc_scanner.h"
+#include <map>
+#include <sstream>
 
 #include <algorithm>
 #include <cstdlib>
@@ -2019,6 +2023,87 @@ void getCapturePreviewSize(
 }
 
 
+void drawWrappedCenteredText(
+    SDL_Renderer* renderer,
+    TTF_Font* font,
+    const std::string& text,
+    const SDL_Rect& area,
+    SDL_Color color)
+{
+    if (!renderer || !font ||
+        area.w <= 0 || area.h <= 0)
+        return;
+
+    SDL_Surface* surface =
+        TTF_RenderUTF8_Blended_Wrapped(
+            font,
+            text.c_str(),
+            color,
+            static_cast<Uint32>(area.w)
+        );
+
+    if (!surface)
+        return;
+
+    SDL_Texture* texture =
+        SDL_CreateTextureFromSurface(
+            renderer,
+            surface
+        );
+
+    const int originalWidth = surface->w;
+    const int originalHeight = surface->h;
+
+    SDL_FreeSurface(surface);
+
+    if (!texture ||
+        originalWidth <= 0 ||
+        originalHeight <= 0)
+    {
+        if (texture)
+            SDL_DestroyTexture(texture);
+
+        return;
+    }
+
+    int width = originalWidth;
+    int height = originalHeight;
+
+    if (width > area.w || height > area.h)
+    {
+        const double scale = std::min(
+            static_cast<double>(area.w) / width,
+            static_cast<double>(area.h) / height
+        );
+
+        width = std::max(
+            1,
+            static_cast<int>(width * scale)
+        );
+
+        height = std::max(
+            1,
+            static_cast<int>(height * scale)
+        );
+    }
+
+    SDL_Rect destination = {
+        area.x + (area.w - width) / 2,
+        area.y + (area.h - height) / 2,
+        width,
+        height
+    };
+
+    SDL_RenderCopy(
+        renderer,
+        texture,
+        nullptr,
+        &destination
+    );
+
+    SDL_DestroyTexture(texture);
+}
+
 // --------------------------------------------------
 // Launch selected game using the active system's
 // emulator and arguments from barefront.ini.
@@ -2759,7 +2844,8 @@ void launchGame(
 
 std::vector<fs::path> scanGames(
     const fs::path& folder,
-    const std::vector<std::string>& allowedExtensions)
+    const std::vector<std::string>& allowedExtensions,
+    std::map<fs::path, std::string>* playlistErrors = nullptr)
 {
     std::vector<fs::path> games;
 
@@ -2930,6 +3016,36 @@ std::vector<fs::path> scanGames(
             games.end()
         );
     }
+
+    // --------------------------------------------------
+    // BareFront universal multidisc playlist filtering.
+    //
+    // Existing scanner rules run first, including VICE
+    // .vfl handling. Valid .m3u playlists then own their
+    // referenced media so those discs do not appear as
+    // duplicate game entries.
+    // --------------------------------------------------
+
+    const auto multidisc =
+        bfmultidisc::filterScanned(games);
+
+    if (playlistErrors)
+    {
+        for (const auto& [path, error] :
+             multidisc.playlistErrors)
+        {
+            auto [it, inserted] =
+                playlistErrors->try_emplace(path, error);
+
+            if (!inserted &&
+                it->second.find(error) == std::string::npos)
+            {
+                it->second += "; " + error;
+            }
+        }
+    }
+
+    games = multidisc.visible;
 
     std::sort(
         games.begin(),
@@ -4630,6 +4746,7 @@ int main()
 
     std::vector<bflibrary::ListedGame>
         curatedVisibleGames;
+    std::map<fs::path, std::string> playlistScanErrors;
 
     std::vector<std::string>
         curatedCollectionNames;
@@ -4683,6 +4800,8 @@ int main()
 
     bool shaderMenuOpen = false;
     bool shaderMenuSaveFailed = false;
+    bool launchErrorOpen = false;
+    std::string launchErrorText;
     std::size_t shaderMenuSelected = 0;
 
 
@@ -5416,6 +5535,7 @@ int main()
                         // before entering the Collections screen.
                         curatedCollections.clear();
                         curatedVisibleGames.clear();
+                        playlistScanErrors.clear();
                         curatedCollectionNames.clear();
                         curatedFavourites.clear();
                         curatedActiveCollection.clear();
@@ -5450,7 +5570,8 @@ int main()
                                     scanGames(
                                         collectionFolder,
                                         systems[activeSystemIndex]
-                                            .romExtensions
+                                            .romExtensions,
+                                        &playlistScanErrors
                                     );
 
                                 curatedCollections.push_back({
@@ -5474,7 +5595,8 @@ int main()
                         games =
                             scanGames(
                                 systems[activeSystemIndex].romFolder,
-                                systems[activeSystemIndex].romExtensions
+                                systems[activeSystemIndex].romExtensions,
+                                &playlistScanErrors
                             );
 
                         gameDisplayTitles.clear();
@@ -5707,7 +5829,26 @@ int main()
 
 
 
-                if (shaderMenuOpen)
+                if (launchErrorOpen)
+                {
+                    switch (action)
+                    {
+                        case InputAction::Select:
+                        case InputAction::Back:
+                            launchErrorOpen = false;
+                            launchErrorText.clear();
+                            playSoundEffect(clickSound);
+                            break;
+
+                        case InputAction::Quit:
+                            running = false;
+                            break;
+
+                        default:
+                            break;
+                    }
+                }
+                else if (shaderMenuOpen)
                 {
                     switch (action)
                     {
@@ -5934,7 +6075,65 @@ switch (action)
 
                         if (!games.empty())
                         {
-                            playSoundEffect(
+                            // Validate selected media before changing presentation.
+                            std::string knownPlaylistError;
+
+                            // Curated entries can carry errors discovered during
+                            // library scanning, including ambiguous playlists.
+                            if (gameSelected < curatedVisibleGames.size() &&
+                                curatedVisibleGames[gameSelected]
+                                    .game.launchPath == games[gameSelected])
+                            {
+                                knownPlaylistError =
+                                    curatedVisibleGames[gameSelected]
+                                        .game.playlistError;
+                            }
+
+                            // Scanner diagnostics include missing media and
+                            // shared-disc ownership conflicts. Apply them to both
+                            // ordinary and curated game entries.
+                            const auto scanError =
+                                playlistScanErrors.find(games[gameSelected]);
+
+                            if (scanError != playlistScanErrors.end())
+                            {
+                                if (knownPlaylistError.empty())
+                                {
+                                    knownPlaylistError = scanError->second;
+                                }
+                                else if (knownPlaylistError.find(
+                                             scanError->second) ==
+                                         std::string::npos)
+                                {
+                                    knownPlaylistError +=
+                                        "; " + scanError->second;
+                                }
+                            }
+
+                            // Reparse playlists at launch to detect missing media
+                            // or disconnected storage since the library was scanned.
+                            const auto launchCheck =
+                                bfmultidisc::check(
+                                    games[gameSelected],
+                                    knownPlaylistError
+                                );
+
+                            if (!launchCheck.allowed)
+                            {
+                                launchErrorText = launchCheck.error;
+                                launchErrorOpen = true;
+                                shaderMenuOpen = false;
+
+                                std::cerr
+                                    << "BareFront launch blocked: "
+                                    << launchCheck.error
+                                    << '\n';
+
+                                // Exit this Select case without starting the emulator.
+                                break;
+                            }
+
+                             playSoundEffect(
                                 clickSound
                             );
 
@@ -7124,6 +7323,102 @@ switch (action)
         // Display completed frame
         // --------------------------------------------------
 
+
+        // --------------------------------------------------
+        // Minimal controller-native invalid-disc panel.
+        if (screen == Screen::Games && launchErrorOpen)
+        {
+            SDL_BlendMode previousBlend = SDL_BLENDMODE_NONE;
+
+            SDL_GetRenderDrawBlendMode(
+                renderer, &previousBlend
+            );
+
+            SDL_SetRenderDrawBlendMode(
+                renderer, SDL_BLENDMODE_BLEND
+            );
+
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 205);
+
+            SDL_Rect scrim = {
+                0, 0, SCREEN_WIDTH, SCREEN_HEIGHT
+            };
+
+            SDL_RenderFillRect(renderer, &scrim);
+
+            SDL_SetRenderDrawColor(renderer, 25, 25, 25, 255);
+
+            SDL_Rect panelArea = {
+                230, 170, 820, 380
+            };
+
+            SDL_RenderFillRect(renderer, &panelArea);
+
+            SDL_SetRenderDrawColor(renderer, 125, 125, 125, 255);
+            SDL_RenderDrawRect(renderer, &panelArea);
+
+            const SDL_Color white = {
+                255, 255, 255, 255
+            };
+
+            const SDL_Color grey = {
+                190, 190, 190, 255
+            };
+
+            const SDL_Color dark = {
+                25, 25, 25, 255
+            };
+
+            // Wrapped heading, constrained to panel width.
+            SDL_Rect heading = {
+                260, 200, 760, 90
+            };
+
+            drawWrappedCenteredText(
+                renderer,
+                gameTitleFont,
+                "INVALID DISC IMAGE!",
+                heading,
+                white
+            );
+
+            // Short guidance, also wrapped and bounded.
+            SDL_Rect message = {
+                260, 302, 760, 65
+            };
+
+            drawWrappedCenteredText(
+                renderer,
+                gameFont,
+                "See README for info.",
+                message,
+                grey
+            );
+
+            // Single highlighted OK button.
+            SDL_Rect buttonArea = {
+                520, 405, 240, 72
+            };
+
+            SDL_SetRenderDrawColor(
+                renderer, 235, 235, 235, 255
+            );
+
+            SDL_RenderFillRect(renderer, &buttonArea);
+
+            drawTextCentered(
+                renderer,
+                gameTitleFont,
+                "OK",
+                buttonArea,
+                dark
+            );
+
+            SDL_SetRenderDrawBlendMode(
+                renderer,
+                previousBlend
+            );
+        }
 
         // Shader selector overlays the game list and CRT preview.
         if (screen == Screen::Games && shaderMenuOpen)

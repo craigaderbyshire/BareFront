@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 #include "favourites.h"
+#include <cctype>
+#include "playlist.h"
 
 namespace bflibrary
 {
@@ -20,6 +22,8 @@ struct Game
     fs::path titlePath;
     fs::path launchPath;
     std::vector<fs::path> media;
+    fs::path playlistPath;
+    std::string playlistError;
     bool folderGame = false;
     bool missingDiscOne = false;
 };
@@ -38,6 +42,25 @@ inline int discNumber(const fs::path& path)
         return std::stoi(match[2].str());
 
     return 1000;
+}
+
+// Recognise the same playlist extensions as the scanner,
+// parser and launch guard.
+inline bool isPlaylistPath(const fs::path& path)
+{
+    std::string extension = path.extension().string();
+
+    std::transform(
+        extension.begin(),
+        extension.end(),
+        extension.begin(),
+        [](unsigned char c)
+        {
+            return static_cast<char>(std::tolower(c));
+        }
+    );
+
+    return extension == ".m3u";
 }
 
 // Takes ROM paths already accepted by BareFront's existing
@@ -109,6 +132,61 @@ inline std::vector<Game> groupGames(
                 return a < b;
             }
         );
+
+        // A playlist is the authoritative launch source.
+        // Never silently fall back to Disc 1 if it is invalid.
+        std::vector<fs::path> playlists;
+
+        for (const fs::path& path : game.media)
+        {
+            if (isPlaylistPath(path))
+                playlists.push_back(path);
+        }
+
+        if (!playlists.empty())
+        {
+            game.playlistPath = playlists.front();
+            game.launchPath = game.playlistPath;
+
+            // The playlist is metadata, not physical media.
+            game.media.erase(
+                std::remove_if(
+                    game.media.begin(),
+                    game.media.end(),
+                    [](const fs::path& path)
+                    {
+                        return isPlaylistPath(path);
+                    }
+                ),
+                game.media.end()
+            );
+
+            if (playlists.size() != 1)
+            {
+                game.playlistError =
+                    "Multiple .m3u playlists in one game folder";
+            }
+            else
+            {
+                try
+                {
+                    auto parsed =
+                        bfplaylist::parse(game.playlistPath);
+
+                    // Playlist order overrides filename sorting.
+                    game.media = std::move(parsed.media);
+                }
+                catch (const std::exception& error)
+                {
+                    game.playlistError = error.what();
+                }
+            }
+
+            // Invalid playlists remain identifiable.
+            // The frontend launch guard must block them.
+            result.push_back(std::move(game));
+            continue;
+        }
 
         if (game.media.empty())
             continue;
