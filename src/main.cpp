@@ -2114,7 +2114,8 @@ void drawWrappedCenteredText(
 
 void launchGame(
     const System& system,
-    const fs::path& game)
+    const fs::path& game,
+    const fs::path& emulatorGame)
 {
     if (system.emulator.empty())
     {
@@ -2560,7 +2561,7 @@ void launchGame(
         arguments,
         "{rom}",
         shellQuote(
-            game.string()
+            emulatorGame.string()
         )
     );
 
@@ -4416,9 +4417,9 @@ int main()
             "PLAYSTATION",
             "ps1",
             "assets/systems/ps1.png",
-            "testroms/ps1",
+            "roms/ps1",
             "assets/games/ps1",
-            { ".cue", ".chd", ".pbp", ".iso" }
+            { ".cue", ".chd", ".pbp", ".iso", ".m3u" }
         },
 
         {
@@ -6133,7 +6134,26 @@ switch (action)
                                 break;
                             }
 
-                             playSoundEffect(
+                            // Keep the canonical BareFront game path
+                            // unchanged. For PS1 playlists only, launch
+                            // the first verified disc directly and let
+                            // DuckStation provide native disc switching.
+                            fs::path emulatorLaunchPath =
+                                games[gameSelected];
+
+                            if (
+                                systems[activeSystemIndex].configSection == "ps1" &&
+                                bfmultidisc::isPlaylist(
+                                    games[gameSelected]
+                                )
+                            )
+                            {
+                                emulatorLaunchPath =
+                                    launchCheck.firstMedia;
+                            }
+
+
+                            playSoundEffect(
                                 clickSound
                             );
 
@@ -6222,7 +6242,8 @@ switch (action)
 
                             launchGame(
                                 systems[activeSystemIndex],
-                                games[gameSelected]
+                                games[gameSelected],
+                                emulatorLaunchPath
                             );
 
 

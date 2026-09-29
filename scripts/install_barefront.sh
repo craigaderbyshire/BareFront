@@ -1699,7 +1699,7 @@ heading "STAGE 3B / DUCKSTATION"
 DUCKSTATION_DIR="$BAREFRONT_DIR/emulators/duckstation"
 DUCKSTATION_EXE="$DUCKSTATION_DIR/DuckStation.AppImage"
 DUCKSTATION_SETTINGS="$DUCKSTATION_DIR/settings.ini"
-DUCKSTATION_GAMESCOPE="/usr/games/gamescope"
+DUCKSTATION_GAMESCOPE="$BAREFRONT_DIR/runtime/presentation/gamescope/gamescope"
 DUCKSTATION_WRAPPER="$BAREFRONT_DIR/scripts/launch_duckstation.sh"
 DUCKSTATION_OVERLAY="$BAREFRONT_DIR/assets/overlays/ps1.png"
 
@@ -1723,6 +1723,55 @@ echo "  $DUCKSTATION_DIR"
 echo
 
 mkdir -p "$DUCKSTATION_DIR"
+
+# ------------------------------------------------------------
+# DuckStation Xbox Guide exit helper
+# ------------------------------------------------------------
+
+DUCKSTATION_GUIDE_SOURCE="$BAREFRONT_DIR/src/duckstation_guide_exit_helper.cpp"
+DUCKSTATION_GUIDE_HELPER="$DUCKSTATION_DIR/duckstation_guide_exit_helper"
+
+if [[ ! -f "$DUCKSTATION_GUIDE_SOURCE" ]]; then
+    die "DuckStation Guide helper source is missing."
+fi
+
+if ! command -v g++ >/dev/null 2>&1 ||
+   ! command -v pkg-config >/dev/null 2>&1 ||
+   ! pkg-config --exists sdl2 x11 xtst
+then
+    die "DuckStation Guide helper build dependencies are missing."
+fi
+
+if [[ ! -x "$DUCKSTATION_GUIDE_HELPER" ]] ||
+   [[ "$DUCKSTATION_GUIDE_SOURCE" -nt "$DUCKSTATION_GUIDE_HELPER" ]]
+then
+    echo
+    echo "Building DuckStation Xbox Guide helper..."
+
+    DUCKSTATION_GUIDE_CANDIDATE="$(
+        mktemp "$DUCKSTATION_DIR/.duckstation-guide-build.XXXXXX"
+    )"
+
+    if ! g++ -std=c++17 -O2 -Wall -Wextra "$DUCKSTATION_GUIDE_SOURCE" -o "$DUCKSTATION_GUIDE_CANDIDATE" $(pkg-config --cflags --libs sdl2 x11 xtst)
+    then
+        rm -f -- "$DUCKSTATION_GUIDE_CANDIDATE"
+        die "DuckStation Guide helper compilation failed."
+    fi
+
+    chmod 755 "$DUCKSTATION_GUIDE_CANDIDATE"
+    mv -fT "$DUCKSTATION_GUIDE_CANDIDATE" "$DUCKSTATION_GUIDE_HELPER"
+
+    echo "Action: BUILD"
+else
+    echo
+    echo "DuckStation Guide helper is already current."
+    echo "Action: SKIP"
+fi
+
+if [[ ! -x "$DUCKSTATION_GUIDE_HELPER" ]]; then
+    die "DuckStation Guide helper build failed."
+fi
+
 
 if [[ ! -x "$DUCKSTATION_GAMESCOPE" ]]; then
     die "Gamescope executable not found: $DUCKSTATION_GAMESCOPE"
@@ -1902,6 +1951,37 @@ LoadSelectedSaveState = Keyboard/F1
 SaveSelectedSaveState = Keyboard/F2
 SelectPreviousSaveStateSlot = Keyboard/F3
 SelectNextSaveStateSlot = Keyboard/F4
+ChangeDisc = Keyboard/F5
+
+[Pad1]
+Circle = SDL-0/B
+Cross = SDL-0/A
+Down = SDL-0/DPadDown
+L1 = SDL-0/LeftShoulder
+L2 = SDL-0/+LeftTrigger
+L3 = SDL-0/LeftStick
+LDown = SDL-0/+LeftY
+LLeft = SDL-0/-LeftX
+LRight = SDL-0/+LeftX
+LUp = SDL-0/-LeftY
+LargeMotor = SDL-0/LargeMotor
+Left = SDL-0/DPadLeft
+R1 = SDL-0/RightShoulder
+R2 = SDL-0/+RightTrigger
+R3 = SDL-0/RightStick
+RDown = SDL-0/+RightY
+RLeft = SDL-0/-RightX
+RRight = SDL-0/+RightX
+RUp = SDL-0/-RightY
+Right = SDL-0/DPadRight
+Select = SDL-0/Back
+SmallMotor = SDL-0/SmallMotor
+Square = SDL-0/X
+Start = SDL-0/Start
+Triangle = SDL-0/Y
+Type = AnalogController
+Up = SDL-0/DPadUp
+
 
 [GPU]
 ResolutionScale = 1
@@ -1926,6 +2006,94 @@ EOF
     echo "  BareFront first-run baseline created."
 fi
 
+
+# ------------------------------------------------------------
+# BareFront-owned DuckStation multidisc hotkey
+#
+# The controller helper maps LB+RB+Y to F5, so ChangeDisc must
+# remain bound to F5. This updates only that single integration
+# key and preserves every unrelated user-managed setting.
+# ------------------------------------------------------------
+
+python3 - "$DUCKSTATION_SETTINGS" <<'PYCONFIG_PS1_MULTIDISC'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+lines = path.read_text().splitlines()
+
+def set_value(section, key, value):
+    header = f"[{section}]"
+
+    try:
+        section_start = lines.index(header)
+    except ValueError:
+        if lines and lines[-1] != "":
+            lines.append("")
+
+        lines.extend([
+            header,
+            f"{key} = {value}",
+            "",
+        ])
+        return
+
+    section_end = len(lines)
+
+    for i in range(section_start + 1, len(lines)):
+        if lines[i].startswith("[") and lines[i].endswith("]"):
+            section_end = i
+            break
+
+    for i in range(section_start + 1, section_end):
+        stripped = lines[i].lstrip()
+
+        if (stripped.startswith(f"{key} =") or
+                stripped.startswith(f"{key}=")):
+            lines[i] = f"{key} = {value}"
+            return
+
+    lines.insert(section_end, f"{key} = {value}")
+
+set_value("Hotkeys", "ChangeDisc", "Keyboard/F5")
+
+path.write_text("\n".join(lines) + "\n")
+PYCONFIG_PS1_MULTIDISC
+
+echo "DuckStation BareFront multidisc hotkey:"
+echo "  ChangeDisc: Keyboard/F5"
+
+# ------------------------------------------------------------
+# BareFront default DuckStation controller mapping
+#
+# If the user already has a Pad1 section it belongs to them and
+# is preserved untouched. Otherwise install the controller map
+# validated with BareFront's Xbox Series X controller.
+#
+# Xbox Guide is deliberately absent: Guide belongs to BareFront.
+# ------------------------------------------------------------
+
+python3 - "$DUCKSTATION_SETTINGS" <<'PYCONFIG_PS1_PAD1'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+lines = path.read_text().splitlines()
+
+if "[Pad1]" not in lines:
+    if lines and lines[-1] != "":
+        lines.append("")
+
+    pad1 = ['[Pad1]', 'Circle = SDL-0/B', 'Cross = SDL-0/A', 'Down = SDL-0/DPadDown', 'L1 = SDL-0/LeftShoulder', 'L2 = SDL-0/+LeftTrigger', 'L3 = SDL-0/LeftStick', 'LDown = SDL-0/+LeftY', 'LLeft = SDL-0/-LeftX', 'LRight = SDL-0/+LeftX', 'LUp = SDL-0/-LeftY', 'LargeMotor = SDL-0/LargeMotor', 'Left = SDL-0/DPadLeft', 'R1 = SDL-0/RightShoulder', 'R2 = SDL-0/+RightTrigger', 'R3 = SDL-0/RightStick', 'RDown = SDL-0/+RightY', 'RLeft = SDL-0/-RightX', 'RRight = SDL-0/+RightX', 'RUp = SDL-0/-RightY', 'Right = SDL-0/DPadRight', 'Select = SDL-0/Back', 'SmallMotor = SDL-0/SmallMotor', 'Square = SDL-0/X', 'Start = SDL-0/Start', 'Triangle = SDL-0/Y', 'Type = AnalogController', 'Up = SDL-0/DPadUp', '']
+    lines.extend(pad1)
+    lines.append("")
+
+    path.write_text("\n".join(lines) + "\n")
+PYCONFIG_PS1_PAD1
+
+echo "DuckStation controller mapping:"
+echo "  Existing Pad1 preserved, or BareFront default installed."
+echo "  Xbox Guide remains reserved for BareFront."
 
 # ------------------------------------------------------------
 # DuckStation BIOS
