@@ -1,0 +1,11 @@
+--- a/src/keyboard_input_x11.cpp
++++ b/src/keyboard_input_x11.cpp
+@@ -40,7 +40,7 @@
+             }
+             else
+             {
+-                display = std::unique_ptr<Display, std::function<void(Display*)>>(XOpenDisplay(disVar), [](Display* d) { XCloseDisplay(d); });
++                display = std::unique_ptr<Display, std::function<void(Display*)>>(XOpenDisplay(disVar), [](Display*) { /* Process exit releases the X11 connection. */ });
+                 usesX11 = 1;
+                 Logger::debug("X11 support");
+             }

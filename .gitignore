@@ -34,3 +34,6 @@ archive/
 assets/games/
 logs/
 /assets/overlays/overlays.ini
+
+# Locally built presentation runtime — installer generated
+/runtime/

@@ -167,6 +167,17 @@ fi
 
 echo "  sudo check: OK"
 
+# An explicit local archive supports offline installation.
+# Otherwise, Stage 2A downloads the pinned public release after
+# curl and CA certificates have been installed by Stage 2.
+PRESENTATION_RELEASE_ARCHIVE="${BAREFRONT_PRESENTATION_ARCHIVE:-}"
+
+if [[ -n "$PRESENTATION_RELEASE_ARCHIVE" &&
+      ! -f "$PRESENTATION_RELEASE_ARCHIVE" ]]; then
+    die "The supplied BAREFRONT_PRESENTATION_ARCHIVE does not exist."
+fi
+
+
 # ============================================================
 # Stage 2 - Common Debian dependencies
 # ============================================================
@@ -363,6 +374,112 @@ echo "  Executable: $GAMESCOPE_EXE"
 echo "  Package version: ${GAMESCOPE_PACKAGE_VERSION:-Unknown}"
 echo "  BareFront launcher: $GAMESCOPE_LAUNCHER"
 echo "  PipeWire service: active"
+echo
+
+# ============================================================
+# Stage 2A - BareFront-owned patched presentation runtime
+# ============================================================
+
+heading "STAGE 2A / PATCHED PRESENTATION RUNTIME"
+
+PRESENTATION_RELEASE_SHA256="5ab12fba00bb359f998a71a79cf2c34c8d0f0e39a6863ca8db6133bb22c8adb2"
+PRESENTATION_INSTALLER="$BAREFRONT_DIR/scripts/install_presentation_runtime.sh"
+
+PRESENTATION_DOWNLOAD_DIR=""
+
+# Clean up only files created by this Stage 2A download.
+# Do not install a global EXIT trap: later installer stages own their traps.
+presentation_cleanup_download()
+{
+    [[ -n "$PRESENTATION_DOWNLOAD_DIR" ]] || return 0
+
+    rm -f -- \
+        "$PRESENTATION_DOWNLOAD_DIR/barefront-presentation-debian13-amd64-v1.tar.xz.part" \
+        "$PRESENTATION_DOWNLOAD_DIR/barefront-presentation-debian13-amd64-v1.tar.xz"
+
+    rmdir -- "$PRESENTATION_DOWNLOAD_DIR"
+    PRESENTATION_DOWNLOAD_DIR=""
+}
+
+if [[ -z "$PRESENTATION_RELEASE_ARCHIVE" ]]; then
+    PRESENTATION_RELEASE_URL="https://github.com/craigaderbyshire/BareFront-Presentation-Runtime/releases/download/v1/barefront-presentation-debian13-amd64-v1.tar.xz"
+
+    command -v curl >/dev/null 2>&1 ||
+        die "curl is required to download the presentation runtime."
+
+    PRESENTATION_DOWNLOAD_DIR="$(
+        mktemp -d "${TMPDIR:-/tmp}/barefront-presentation-v1.XXXXXX"
+    )" || die "Could not create presentation download directory."
+
+    PRESENTATION_RELEASE_ARCHIVE="$PRESENTATION_DOWNLOAD_DIR/barefront-presentation-debian13-amd64-v1.tar.xz"
+    PRESENTATION_PARTIAL="$PRESENTATION_RELEASE_ARCHIVE.part"
+
+    echo "Downloading BareFront's pinned presentation runtime..."
+
+    if ! curl \
+        --fail \
+        --location \
+        --silent \
+        --show-error \
+        --retry 3 \
+        --connect-timeout 15 \
+        --proto '=https' \
+        --proto-redir '=https' \
+        --output "$PRESENTATION_PARTIAL" \
+        "$PRESENTATION_RELEASE_URL"
+    then
+        presentation_cleanup_download
+        die "Could not download the pinned presentation runtime."
+    fi
+
+    echo "Verifying downloaded presentation runtime..."
+
+    if ! printf '%s  %s\n' \
+        "$PRESENTATION_RELEASE_SHA256" \
+        "$PRESENTATION_PARTIAL" | sha256sum --check -
+    then
+        presentation_cleanup_download
+        die "Downloaded presentation runtime failed SHA-256 verification."
+    fi
+
+    if ! mv -- "$PRESENTATION_PARTIAL" "$PRESENTATION_RELEASE_ARCHIVE"; then
+        presentation_cleanup_download
+        die "Could not finalise the downloaded presentation runtime."
+    fi
+
+    echo "Pinned presentation runtime downloaded and verified."
+else
+    echo "Using explicitly supplied local presentation archive."
+fi
+
+if [[ ! -x "$PRESENTATION_INSTALLER" ]]; then
+    presentation_cleanup_download
+    die "BareFront presentation runtime installer is missing."
+fi
+
+if ! "$PRESENTATION_INSTALLER" \
+    "$PRESENTATION_RELEASE_ARCHIVE" \
+    "$PRESENTATION_RELEASE_SHA256" \
+    "$BAREFRONT_DIR"
+then
+    presentation_cleanup_download
+    die "BareFront's pinned presentation runtime failed to install."
+fi
+
+source "$BAREFRONT_DIR/scripts/barefront_presentation_runtime.sh"
+
+if ! barefront_resolve_presentation_runtime "$BAREFRONT_DIR"; then
+    presentation_cleanup_download
+    die "BareFront's private presentation runtime failed verification."
+fi
+
+echo
+echo "Private Gamescope: $BAREFRONT_GAMESCOPE"
+echo "Private Vulkan layers: $BAREFRONT_VKBASALT_LAYER_DIR"
+echo "Patched presentation runtime: OK"
+
+# The installer has finished consuming the archive and verified its runtime.
+presentation_cleanup_download
 echo
 
 # ============================================================

@@ -1,0 +1,33 @@
+--- a/src/Backends/SDLBackend.cpp
++++ b/src/Backends/SDLBackend.cpp
+@@ -133,6 +133,7 @@
+ 	{
+ 	public:
+ 		CSDLBackend();
++		~CSDLBackend();
+ 
+ 		/////////////
+ 		// IBackend
+@@ -398,6 +399,14 @@
+ 	{
+ 	}
+ 
++	CSDLBackend::~CSDLBackend()
++	{
++		SDL_Event event = { .type = SDL_QUIT };
++		SDL_PushEvent( &event );
++		if ( m_SDLThread.joinable() )
++			m_SDLThread.join();
++	}
++
+ 	bool CSDLBackend::Init()
+ 	{
+ 		m_eSDLInit.wait( SDLInitState::SDLInit_Waiting );
+@@ -649,6 +658,7 @@
+ 
+ 			switch( event.type )
+ 			{
++				case SDL_QUIT: return;
+ 				case SDL_CLIPBOARDUPDATE:
+ 				{
+ 					char *pClipBoard = SDL_GetClipboardText();
