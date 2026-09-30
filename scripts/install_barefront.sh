@@ -5217,6 +5217,8 @@ MEDNAFEN_PCE_LOCAL_DIR="$BAREFRONT_DIR/emulators/mednafen"
 MEDNAFEN_PCE_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mednafen_pce.sh"
 MEDNAFEN_PCE_PROFILE="$BAREFRONT_DIR/saves/pcengine/mednafen"
 MEDNAFEN_PCE_CONFIG="$MEDNAFEN_PCE_PROFILE/mednafen.cfg"
+MEDNAFEN_PCE_CONTROL_SOURCE="$BAREFRONT_DIR/src/pcengine_controller_helper.cpp"
+MEDNAFEN_PCE_CONTROL_HELPER="$MEDNAFEN_PCE_LOCAL_DIR/pcengine_controller_helper"
 
 MEDNAFEN_PCE_BARECRT_DIR="$BAREFRONT_DIR/assets/shaders/barecrt"
 MEDNAFEN_PCE_BARECRT_SHADER="$MEDNAFEN_PCE_BARECRT_DIR/BareCRT_v2.fx"
@@ -5278,6 +5280,64 @@ mkdir -p \
     "$BAREFRONT_DIR/saves/pcengine" \
     "$BAREFRONT_DIR/assets/games/pcengine" \
     "$BAREFRONT_DIR/assets/videos/pcengine"
+
+# ------------------------------------------------------------
+# PC Engine BareFront controller helper
+# Guide tap = ignored
+# Guide hold 1.5 s = exit
+# ------------------------------------------------------------
+
+if [[ ! -f "$MEDNAFEN_PCE_CONTROL_SOURCE" ]]; then
+    die "PC Engine controller helper source is missing: $MEDNAFEN_PCE_CONTROL_SOURCE"
+fi
+
+if ! command -v g++ >/dev/null 2>&1 ||
+   ! command -v pkg-config >/dev/null 2>&1 ||
+   ! pkg-config --exists sdl2 x11 xtst
+then
+    die "PC Engine controller helper build dependencies are missing."
+fi
+
+if [[ ! -x "$MEDNAFEN_PCE_CONTROL_HELPER" ]] ||
+   [[ "$MEDNAFEN_PCE_CONTROL_SOURCE" -nt "$MEDNAFEN_PCE_CONTROL_HELPER" ]]
+then
+    echo
+    echo "Building PC Engine BareFront controller helper..."
+
+    MEDNAFEN_PCE_CONTROL_TEMP="$(
+        mktemp "$MEDNAFEN_PCE_LOCAL_DIR/.pcengine_controller_helper.XXXXXX"
+    )"
+
+    rm -f -- "$MEDNAFEN_PCE_CONTROL_TEMP"
+
+    if ! g++ \
+        -std=c++17 \
+        -Wall \
+        -Wextra \
+        -Wpedantic \
+        "$MEDNAFEN_PCE_CONTROL_SOURCE" \
+        -o "$MEDNAFEN_PCE_CONTROL_TEMP" \
+        $(pkg-config --cflags --libs sdl2 x11 xtst)
+    then
+        rm -f -- "$MEDNAFEN_PCE_CONTROL_TEMP"
+        die "PC Engine controller helper compilation failed."
+    fi
+
+    chmod 755 "$MEDNAFEN_PCE_CONTROL_TEMP"
+    mv -fT \
+        "$MEDNAFEN_PCE_CONTROL_TEMP" \
+        "$MEDNAFEN_PCE_CONTROL_HELPER"
+
+    echo "  Action: BUILD"
+else
+    echo
+    echo "PC Engine controller helper is already current."
+    echo "  Action: SKIP"
+fi
+
+if [[ ! -x "$MEDNAFEN_PCE_CONTROL_HELPER" ]]; then
+    die "PC Engine controller helper build failed."
+fi
 
 if [[ ! -f "$MEDNAFEN_PCE_CONFIG" ]]; then
     echo "Creating isolated Mednafen profile..."
@@ -5366,6 +5426,120 @@ for key in defaults:
 print("  Keyboard controls: OK")
 print("  Esc exit binding: OK")
 PYMEDNAFEN
+
+# ------------------------------------------------------------
+# PC Engine Xbox Series controller baseline
+#
+# Upgrade only the known keyboard-only/default mapping.
+# Preserve an existing custom controller configuration.
+# ------------------------------------------------------------
+
+MEDNAFEN_PCE_CONFIG_PATH="$MEDNAFEN_PCE_CONFIG" python3 - <<'PYMEDNAFEN_PCE_PAD'
+import os
+from pathlib import Path
+
+path = Path(os.environ["MEDNAFEN_PCE_CONFIG_PATH"])
+original = path.read_text()
+lines = original.splitlines()
+
+joy = "0x0006045e0b1205010008000b00000000"
+
+xbox = {
+    "pce_fast.input.port1.gamepad.up":
+        f"joystick {joy} abs_7-",
+    "pce_fast.input.port1.gamepad.down":
+        f"joystick {joy} abs_7+",
+    "pce_fast.input.port1.gamepad.left":
+        f"joystick {joy} abs_6-",
+    "pce_fast.input.port1.gamepad.right":
+        f"joystick {joy} abs_6+",
+    "pce_fast.input.port1.gamepad.i":
+        f"joystick {joy} button_0",
+    "pce_fast.input.port1.gamepad.ii":
+        f"joystick {joy} button_1",
+    "pce_fast.input.port1.gamepad.run":
+        f"joystick {joy} button_7",
+    "pce_fast.input.port1.gamepad.select":
+        f"joystick {joy} button_6",
+}
+
+keyboard = {
+    "pce_fast.input.port1.gamepad.up": "keyboard 0x0 82",
+    "pce_fast.input.port1.gamepad.down": "keyboard 0x0 81",
+    "pce_fast.input.port1.gamepad.left": "keyboard 0x0 80",
+    "pce_fast.input.port1.gamepad.right": "keyboard 0x0 79",
+    "pce_fast.input.port1.gamepad.i": "keyboard 0x0 27",
+    "pce_fast.input.port1.gamepad.ii": "keyboard 0x0 29",
+    "pce_fast.input.port1.gamepad.run": "keyboard 0x0 40",
+    "pce_fast.input.port1.gamepad.select": "keyboard 0x0 43",
+}
+
+resolved = {}
+
+for line in lines:
+    parts = line.split(None, 1)
+
+    if len(parts) == 2:
+        resolved[parts[0]] = parts[1].strip()
+
+current = {
+    key: resolved.get(key, "")
+    for key in xbox
+}
+
+if current == xbox:
+    print("  Xbox controller mapping: CURRENT")
+
+else:
+    safe_to_upgrade = all(
+        current[key] in ("", keyboard[key])
+        for key in xbox
+    )
+
+    if safe_to_upgrade:
+        seen = set()
+
+        for index, line in enumerate(lines):
+            parts = line.split(None, 1)
+
+            if not parts:
+                continue
+
+            key = parts[0]
+
+            if key in xbox:
+                lines[index] = f"{key} {xbox[key]}"
+                seen.add(key)
+
+        for key, value in xbox.items():
+            if key not in seen:
+                lines.append(f"{key} {value}")
+
+        path.write_text("\n".join(lines) + "\n")
+
+        print("  Xbox controller mapping: UPGRADED")
+
+    else:
+        print("  Xbox controller mapping: PRESERVE CUSTOM")
+
+# Required gameplay controls must remain populated whether the
+# profile was upgraded, already current, or intentionally custom.
+resolved = {}
+
+for line in path.read_text().splitlines():
+    parts = line.split(None, 1)
+
+    if len(parts) == 2:
+        resolved[parts[0]] = parts[1].strip()
+
+for key in xbox:
+    if not resolved.get(key):
+        raise SystemExit(
+            f"Empty PC Engine controller binding after migration: {key}"
+        )
+
+print("  PC Engine controller bindings: OK")
+PYMEDNAFEN_PCE_PAD
 
 MEDNAFEN_PCE_PACKAGE_VERSION="$(
     dpkg-query -W -f='${Version}' mednafen 2>/dev/null || true
