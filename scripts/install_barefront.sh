@@ -3388,6 +3388,58 @@ ensure_simple_symlink \
 
 
 # ------------------------------------------------------------
+# Flycast BareFront controller helper
+# Guide hold = exit; LB+RB+Y = native Flycast menu
+# ------------------------------------------------------------
+
+FLYCAST_CONTROL_SOURCE="$BAREFRONT_DIR/src/flycast_controller_helper.cpp"
+FLYCAST_CONTROL_DIR="$BAREFRONT_DIR/emulators/flycast"
+FLYCAST_CONTROL_HELPER="$FLYCAST_CONTROL_DIR/flycast_controller_helper"
+
+if [[ ! -f "$FLYCAST_CONTROL_SOURCE" ]]; then
+    die "Flycast controller helper source is missing."
+fi
+
+if ! command -v g++ >/dev/null 2>&1 ||
+   ! command -v pkg-config >/dev/null 2>&1 ||
+   ! pkg-config --exists sdl2 x11 xtst
+then
+    die "Flycast controller helper build dependencies are missing."
+fi
+
+mkdir -p "$FLYCAST_CONTROL_DIR"
+
+if [[ ! -x "$FLYCAST_CONTROL_HELPER" ]] ||
+   [[ "$FLYCAST_CONTROL_SOURCE" -nt "$FLYCAST_CONTROL_HELPER" ]]
+then
+    echo
+    echo "Building Flycast BareFront controller helper..."
+
+    FLYCAST_CONTROL_TEMP="$(
+        mktemp "$FLYCAST_CONTROL_DIR/.flycast-control-build.XXXXXX"
+    )"
+
+    if ! g++ -std=c++17 -O2 -Wall -Wextra         "$FLYCAST_CONTROL_SOURCE"         -o "$FLYCAST_CONTROL_TEMP"         $(pkg-config --cflags --libs sdl2 x11 xtst)
+    then
+        rm -f -- "$FLYCAST_CONTROL_TEMP"
+        die "Flycast controller helper compilation failed."
+    fi
+
+    chmod 0755 "$FLYCAST_CONTROL_TEMP"
+    mv -fT -- "$FLYCAST_CONTROL_TEMP" "$FLYCAST_CONTROL_HELPER"
+
+    echo "Flycast controller helper built."
+else
+    echo
+    echo "Flycast controller helper already current."
+fi
+
+if [[ ! -x "$FLYCAST_CONTROL_HELPER" ]]; then
+    die "Flycast controller helper verification failed."
+fi
+
+
+# ------------------------------------------------------------
 # Flycast BareFront runtime integration
 # ------------------------------------------------------------
 
@@ -3487,14 +3539,27 @@ fi
 
 
 # Xbox Series X controller baseline.
-# Install only when absent; never overwrite a user's Flycast mapping.
+# BareFront owns Guide externally so a quick Guide tap is harmless.
+# The helper turns a 1500 ms Guide hold into Escape and LB+RB+Y
+# into Flycast's native menu. Keep numbered digital binds contiguous.
 FLYCAST_XBOX_MAPPING_SOURCE="$BAREFRONT_DIR/assets/config/flycast/SDL_Xbox Series X Controller.cfg"
 FLYCAST_XBOX_MAPPING="$FLYCAST_MAPPING_DIR/SDL_Xbox Series X Controller.cfg"
 
-if [[ ! -f "$FLYCAST_XBOX_MAPPING" ]]; then
+if grep -Fq '11:btn_escape' "$FLYCAST_XBOX_MAPPING_SOURCE"; then
+    die "Bundled Flycast mapping still assigns Guide directly to Exit."
+fi
 
-    [[ -f "$FLYCAST_XBOX_MAPPING_SOURCE" ]] ||
-        die "Bundled Flycast Xbox controller mapping is missing."
+for expected in \
+    'bind8 = 256:btn_dpad1_up' \
+    'bind9 = 257:btn_dpad1_down' \
+    'bind10 = 258:btn_dpad1_left' \
+    'bind11 = 259:btn_dpad1_right'
+do
+    grep -Fqx "$expected" "$FLYCAST_XBOX_MAPPING_SOURCE" ||
+        die "Bundled Flycast controller mapping failed validation."
+done
+
+if [[ ! -f "$FLYCAST_XBOX_MAPPING" ]]; then
 
     install -m 0644 "$FLYCAST_XBOX_MAPPING_SOURCE" "$FLYCAST_XBOX_MAPPING"
 
@@ -3502,25 +3567,20 @@ if [[ ! -f "$FLYCAST_XBOX_MAPPING" ]]; then
 
 else
 
-    # Upgrade only BareFront's exact previous Xbox mapping.
-    # Customised Flycast mappings must never be overwritten.
-    FLYCAST_OLD_XBOX_SHA256="b2f25c244ecd2d3694d4ff011374cbefee9b98254a2948ae52dffb80c30d503e"
+    # Upgrade only known BareFront-owned historical mappings.
+    # Never overwrite a customised Flycast mapping.
+    FLYCAST_OLD_SELECT_MAP_SHA256="b2f25c244ecd2d3694d4ff011374cbefee9b98254a2948ae52dffb80c30d503e"
+    FLYCAST_PRE_HOLD_MAP_SHA256="e22f94888bdb24166aeabd2dcb24d25f6cb48514c7b36b339598c4e384fafd0c"
+
     FLYCAST_INSTALLED_XBOX_SHA256="$(
         sha256sum "$FLYCAST_XBOX_MAPPING" | awk '{print $1}'
     )"
 
-    if [[ "$FLYCAST_INSTALLED_XBOX_SHA256" == "$FLYCAST_OLD_XBOX_SHA256" ]]; then
-
-        [[ -f "$FLYCAST_XBOX_MAPPING_SOURCE" ]] ||
-            die "Bundled Flycast Xbox controller mapping is missing."
-
-        if grep -Fq '6:btn_menu' "$FLYCAST_XBOX_MAPPING_SOURCE" ||
-           ! grep -Fq '11:btn_escape' "$FLYCAST_XBOX_MAPPING_SOURCE"; then
-            die "Bundled Flycast Xbox controller mapping failed validation."
-        fi
-
+    if [[ "$FLYCAST_INSTALLED_XBOX_SHA256" == "$FLYCAST_OLD_SELECT_MAP_SHA256" ||
+          "$FLYCAST_INSTALLED_XBOX_SHA256" == "$FLYCAST_PRE_HOLD_MAP_SHA256" ]]
+    then
         FLYCAST_XBOX_MAPPING_BACKUP="$(
-            mktemp "${FLYCAST_XBOX_MAPPING}.pre-select-menu.XXXXXX"
+            mktemp "${FLYCAST_XBOX_MAPPING}.pre-guide-hold.XXXXXX"
         )"
 
         cp -p "$FLYCAST_XBOX_MAPPING" "$FLYCAST_XBOX_MAPPING_BACKUP" ||
@@ -3529,23 +3589,18 @@ else
         install -m 0644 "$FLYCAST_XBOX_MAPPING_SOURCE" "$FLYCAST_XBOX_MAPPING" ||
             die "Could not migrate the Flycast Xbox mapping."
 
-        echo "  Flycast Xbox Select-menu mapping: MIGRATED"
+        echo "  Flycast Guide-hold controller mapping: MIGRATED"
         echo "  Previous mapping: $FLYCAST_XBOX_MAPPING_BACKUP"
 
     else
 
         echo "  Flycast Xbox controller mapping already exists: PRESERVED"
 
-        if grep -Fq '6:btn_menu' "$FLYCAST_XBOX_MAPPING"; then
-            echo "  WARNING: existing custom mapping still assigns"
-            echo "           Select to the Flycast menu."
+        if grep -Fq '11:btn_escape' "$FLYCAST_XBOX_MAPPING"; then
+            echo "  WARNING: custom Flycast mapping still assigns"
+            echo "           Guide directly to Exit."
         fi
 
-    fi
-
-    if ! grep -Fq '11:btn_escape' "$FLYCAST_XBOX_MAPPING"; then
-        echo "  WARNING: existing Xbox mapping does not contain"
-        echo "           the tested Guide-to-Exit binding."
     fi
 
 fi

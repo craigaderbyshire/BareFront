@@ -4492,7 +4492,7 @@ int main()
             "assets/systems/dreamcast.png",
             "testroms/dreamcast",
             "assets/games/dreamcast",
-            { ".cdi", ".gdi", ".chd" }
+            { ".cdi", ".gdi", ".chd", ".m3u" }
         },
 
         {
@@ -6136,14 +6136,16 @@ switch (action)
                             }
 
                             // Keep the canonical BareFront game path
-                            // unchanged. For PS1 playlists only, launch
-                            // the first verified disc directly and let
-                            // DuckStation provide native disc switching.
+                            // unchanged. Standalone DuckStation and Flycast
+                            // do not consume BareFront's canonical .m3u here,
+                            // so launch the first verified disc directly and
+                            // let the emulator provide native disc switching.
                             fs::path emulatorLaunchPath =
                                 games[gameSelected];
 
                             if (
-                                systems[activeSystemIndex].configSection == "ps1" &&
+                                (systems[activeSystemIndex].configSection == "ps1" ||
+                                 systems[activeSystemIndex].configSection == "dreamcast") &&
                                 bfmultidisc::isPlaylist(
                                     games[gameSelected]
                                 )
