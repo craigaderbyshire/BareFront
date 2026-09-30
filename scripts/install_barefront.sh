@@ -5407,12 +5407,14 @@ echo "PC Engine integration stage complete."
 heading "STAGE 3C / SATURN"
 
 MEDNAFEN_SATURN_EXE="/usr/games/mednafen"
-MEDNAFEN_SATURN_GAMESCOPE="/usr/games/gamescope"
+MEDNAFEN_SATURN_GAMESCOPE="$BAREFRONT_GAMESCOPE"
 MEDNAFEN_SATURN_LOCAL_DIR="$BAREFRONT_DIR/emulators/mednafen"
 MEDNAFEN_SATURN_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mednafen_saturn.sh"
 MEDNAFEN_SATURN_PROFILE="$BAREFRONT_DIR/saves/saturn/mednafen"
 MEDNAFEN_SATURN_CONFIG="$MEDNAFEN_SATURN_PROFILE/mednafen.cfg"
 MEDNAFEN_SATURN_OVERLAY="$BAREFRONT_DIR/assets/overlays/saturn.png"
+MEDNAFEN_SATURN_CONTROL_SOURCE="$BAREFRONT_DIR/src/saturn_controller_helper.cpp"
+MEDNAFEN_SATURN_CONTROL_HELPER="$MEDNAFEN_SATURN_LOCAL_DIR/saturn_controller_helper"
 
 echo "Configuring BareFront Saturn integration..."
 echo
@@ -5455,6 +5457,56 @@ mkdir -p \
     "$BAREFRONT_DIR/saves/saturn" \
     "$BAREFRONT_DIR/assets/games/saturn" \
     "$BAREFRONT_DIR/assets/videos/saturn"
+
+# ------------------------------------------------------------
+# Saturn BareFront controller helper
+# Guide hold = exit
+# LB+RB+Y = next disc
+# ------------------------------------------------------------
+
+if [[ ! -f "$MEDNAFEN_SATURN_CONTROL_SOURCE" ]]; then
+    die "Saturn controller helper source is missing: $MEDNAFEN_SATURN_CONTROL_SOURCE"
+fi
+
+if ! command -v g++ >/dev/null 2>&1 ||
+   ! command -v pkg-config >/dev/null 2>&1 ||
+   ! pkg-config --exists sdl2 x11 xtst
+then
+    die "Saturn controller helper build dependencies are missing."
+fi
+
+if [[ ! -x "$MEDNAFEN_SATURN_CONTROL_HELPER" ]] ||
+   [[ "$MEDNAFEN_SATURN_CONTROL_SOURCE" -nt "$MEDNAFEN_SATURN_CONTROL_HELPER" ]]
+then
+    echo
+    echo "Building Saturn BareFront controller helper..."
+
+    MEDNAFEN_SATURN_CONTROL_TEMP="$(
+        mktemp "$MEDNAFEN_SATURN_LOCAL_DIR/.saturn-control-build.XXXXXX"
+    )"
+
+    if ! g++ -std=c++17 -O2 -Wall -Wextra \
+        "$MEDNAFEN_SATURN_CONTROL_SOURCE" \
+        -o "$MEDNAFEN_SATURN_CONTROL_TEMP" \
+        $(pkg-config --cflags --libs sdl2 x11 xtst)
+    then
+        rm -f -- "$MEDNAFEN_SATURN_CONTROL_TEMP"
+        die "Saturn controller helper compilation failed."
+    fi
+
+    chmod 0755 "$MEDNAFEN_SATURN_CONTROL_TEMP"
+    mv -fT --         "$MEDNAFEN_SATURN_CONTROL_TEMP"         "$MEDNAFEN_SATURN_CONTROL_HELPER"
+
+    echo "  Action: BUILD"
+else
+    echo
+    echo "Saturn controller helper is already current."
+    echo "  Action: SKIP"
+fi
+
+if [[ ! -x "$MEDNAFEN_SATURN_CONTROL_HELPER" ]]; then
+    die "Saturn controller helper verification failed."
+fi
 
 if [[ ! -f "$MEDNAFEN_SATURN_CONFIG" ]]; then
     echo "Creating isolated Mednafen profile..."
@@ -5559,6 +5611,158 @@ print("  No visual filtering: OK")
 print("  Esc exit binding: OK")
 PYMEDNAFEN_SATURN
 
+# ------------------------------------------------------------
+# Saturn Xbox Series controller baseline
+#
+# Upgrade only known keyboard-only/default mappings.
+# Preserve any existing custom controller configuration.
+# ------------------------------------------------------------
+
+MEDNAFEN_SATURN_CONFIG_PATH="$MEDNAFEN_SATURN_CONFIG" python3 - <<'PYMEDNAFEN_SATURN_PAD'
+import os
+from pathlib import Path
+
+path = Path(os.environ["MEDNAFEN_SATURN_CONFIG_PATH"])
+original = path.read_text()
+lines = original.splitlines()
+
+xbox = {
+    "ss.input.port1.gamepad.a":
+        "joystick 0x0006045e0b1205010008000b00000000 button_2",
+    "ss.input.port1.gamepad.b":
+        "joystick 0x0006045e0b1205010008000b00000000 button_0",
+    "ss.input.port1.gamepad.c":
+        "joystick 0x0006045e0b1205010008000b00000000 button_1",
+    "ss.input.port1.gamepad.down":
+        "joystick 0x0006045e0b1205010008000b00000000 abs_7+",
+    "ss.input.port1.gamepad.left":
+        "joystick 0x0006045e0b1205010008000b00000000 abs_6-",
+    "ss.input.port1.gamepad.ls":
+        "joystick 0x0006045e0b1205010008000b00000000 abs_2-+",
+    "ss.input.port1.gamepad.right":
+        "joystick 0x0006045e0b1205010008000b00000000 abs_6+",
+    "ss.input.port1.gamepad.rs":
+        "joystick 0x0006045e0b1205010008000b00000000 abs_5-+",
+    "ss.input.port1.gamepad.start":
+        "joystick 0x0006045e0b1205010008000b00000000 button_7",
+    "ss.input.port1.gamepad.up":
+        "joystick 0x0006045e0b1205010008000b00000000 abs_7-",
+    "ss.input.port1.gamepad.x":
+        "joystick 0x0006045e0b1205010008000b00000000 button_3",
+    "ss.input.port1.gamepad.y":
+        "joystick 0x0006045e0b1205010008000b00000000 button_4",
+    "ss.input.port1.gamepad.z":
+        "joystick 0x0006045e0b1205010008000b00000000 button_5",
+}
+
+# Mednafen 1.32.1 generated keyboard-only defaults observed
+# on a fresh isolated Saturn profile.
+mednafen_keyboard = {
+    "ss.input.port1.gamepad.a": "keyboard 0x0 89",
+    "ss.input.port1.gamepad.b": "keyboard 0x0 90",
+    "ss.input.port1.gamepad.c": "keyboard 0x0 91",
+    "ss.input.port1.gamepad.down": "keyboard 0x0 22",
+    "ss.input.port1.gamepad.left": "keyboard 0x0 4",
+    "ss.input.port1.gamepad.ls": "keyboard 0x0 95",
+    "ss.input.port1.gamepad.right": "keyboard 0x0 7",
+    "ss.input.port1.gamepad.rs": "keyboard 0x0 97",
+    "ss.input.port1.gamepad.start": "keyboard 0x0 40",
+    "ss.input.port1.gamepad.up": "keyboard 0x0 26",
+    "ss.input.port1.gamepad.x": "keyboard 0x0 92",
+    "ss.input.port1.gamepad.y": "keyboard 0x0 93",
+    "ss.input.port1.gamepad.z": "keyboard 0x0 94",
+}
+
+# Older BareFront fallback keyboard values. These may exist on
+# profiles created by an earlier installer revision.
+barefront_keyboard = {
+    "ss.input.port1.gamepad.up": "keyboard 0x0 82",
+    "ss.input.port1.gamepad.down": "keyboard 0x0 81",
+    "ss.input.port1.gamepad.left": "keyboard 0x0 80",
+    "ss.input.port1.gamepad.right": "keyboard 0x0 79",
+    "ss.input.port1.gamepad.a": "keyboard 0x0 29",
+    "ss.input.port1.gamepad.b": "keyboard 0x0 27",
+    "ss.input.port1.gamepad.c": "keyboard 0x0 6",
+    "ss.input.port1.gamepad.x": "keyboard 0x0 4",
+    "ss.input.port1.gamepad.y": "keyboard 0x0 22",
+    "ss.input.port1.gamepad.z": "keyboard 0x0 7",
+    "ss.input.port1.gamepad.ls": "keyboard 0x0 20",
+    "ss.input.port1.gamepad.rs": "keyboard 0x0 8",
+    "ss.input.port1.gamepad.start": "keyboard 0x0 40",
+}
+
+resolved = {}
+
+for line in lines:
+    parts = line.split(None, 1)
+
+    if len(parts) == 2:
+        resolved[parts[0]] = parts[1].strip()
+
+current = {
+    key: resolved.get(key, "")
+    for key in xbox
+}
+
+if current == xbox:
+    print("  Xbox controller mapping: CURRENT")
+
+else:
+    safe_to_upgrade = all(
+        current[key] in (
+            "",
+            mednafen_keyboard[key],
+            barefront_keyboard[key],
+        )
+        for key in xbox
+    )
+
+    if safe_to_upgrade:
+        seen = set()
+
+        for index, line in enumerate(lines):
+            parts = line.split(None, 1)
+
+            if not parts:
+                continue
+
+            key = parts[0]
+
+            if key in xbox:
+                lines[index] = f"{key} {xbox[key]}"
+                seen.add(key)
+
+        for key, value in xbox.items():
+            if key not in seen:
+                lines.append(f"{key} {value}")
+
+        updated = "\n".join(lines) + "\n"
+        path.write_text(updated)
+
+        print("  Xbox controller mapping: UPGRADED")
+
+    else:
+        print("  Xbox controller mapping: PRESERVE CUSTOM")
+
+# Final integrity check. Custom mappings are allowed, but no
+# required Saturn gamepad binding may be empty.
+resolved = {}
+
+for line in path.read_text().splitlines():
+    parts = line.split(None, 1)
+
+    if len(parts) == 2:
+        resolved[parts[0]] = parts[1].strip()
+
+for key in xbox:
+    if not resolved.get(key):
+        raise SystemExit(
+            f"Empty Saturn controller binding after migration: {key}"
+        )
+
+print("  Saturn controller bindings: OK")
+PYMEDNAFEN_SATURN_PAD
+
 MEDNAFEN_SATURN_PACKAGE_VERSION="$(
     dpkg-query -W -f='${Version}' mednafen 2>/dev/null || true
 )"
@@ -5582,9 +5786,13 @@ echo "  Gamescope: OK"
 echo "  BareFront launcher: OK"
 echo "  Presentation overlay: OK"
 echo "  Isolated profile: OK"
+echo "  Controller helper: OK"
 echo
 echo "BareFront-owned controls:"
 echo "  Esc = return directly to BareFront"
+echo "  Guide tap = ignored"
+echo "  Guide hold 1.5 s = return directly to BareFront"
+echo "  LB+RB+Y = next disc in a multidisc playlist"
 echo
 echo "Saturn integration stage complete."
 

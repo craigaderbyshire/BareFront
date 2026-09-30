@@ -5545,7 +5545,8 @@ int main()
 
                         if (systems[activeSystemIndex].configSection == "dreamcast" ||
                              systems[activeSystemIndex].configSection == "nes" ||
-                             systems[activeSystemIndex].configSection == "ps1")
+                             systems[activeSystemIndex].configSection == "ps1" ||
+                             systems[activeSystemIndex].configSection == "saturn")
                         {
                             curatedCollectionNames =
                                 bflibrary::collectionNames(systems[activeSystemIndex].configSection);
@@ -5686,11 +5687,11 @@ int main()
 
 
                         screen =
-                            ((activeSection == "dreamcast" || activeSection == "nes" || activeSection == "ps1"))
+                            ((activeSection == "dreamcast" || activeSection == "nes" || activeSection == "ps1" || activeSection == "saturn"))
                                 ? Screen::Collections
                                 : Screen::Games;
 
-                        if ((activeSection == "dreamcast" || activeSection == "nes" || activeSection == "ps1"))
+                        if ((activeSection == "dreamcast" || activeSection == "nes" || activeSection == "ps1" || activeSection == "saturn"))
                         {
                             // The Collections screen needs no game preview.
                             videoPlayer.stop();
