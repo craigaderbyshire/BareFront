@@ -124,7 +124,11 @@ int main()
 
         while (SDL_PollEvent(&event))
         {
-            if (event.type == SDL_CONTROLLERBUTTONDOWN &&
+            if (event.type == SDL_QUIT)
+            {
+                exitRequested = true;
+            }
+            else if (event.type == SDL_CONTROLLERBUTTONDOWN &&
                 event.cbutton.button ==
                     SDL_CONTROLLER_BUTTON_MISC1)
             {
