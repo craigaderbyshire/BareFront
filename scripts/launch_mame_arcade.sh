@@ -4,11 +4,15 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROM="${1:-}"
+MODE="${2:-}"
 
 MAME="/usr/games/mame"
-GAMESCOPE="/usr/games/gamescope"
+source "$ROOT/scripts/barefront_presentation_runtime.sh"
+barefront_resolve_presentation_runtime "$ROOT"
+GAMESCOPE="$BAREFRONT_GAMESCOPE"
+export VK_IMPLICIT_LAYER_PATH="$BAREFRONT_VKBASALT_LAYER_DIR"
 PRESENTATION_HELPER="$ROOT/c64_presentation_helper"
-BARECRT="$ROOT/assets/shaders/barecrt/BareCRT_v2.fx"
+GUIDE_EXIT_HELPER="$ROOT/emulators/mame/mame_guide_exit_helper"
 
 OUTPUT_WIDTH=1920
 OUTPUT_HEIGHT=1080
@@ -25,6 +29,11 @@ if [[ -z "$ROM" ]]; then
 fi
 
 
+if [[ -n "$MODE" && "$MODE" != "--dry-run" ]]; then
+    echo "Invalid Arcade launch mode: $MODE" >&2
+    exit 1
+fi
+
 if [[ "$ROM" != /* ]]; then
     ROM="$ROOT/${ROM#./}"
 fi
@@ -40,7 +49,8 @@ fi
 for required in \
     "$MAME" \
     "$GAMESCOPE" \
-    "$PRESENTATION_HELPER"
+    "$PRESENTATION_HELPER" \
+    "$GUIDE_EXIT_HELPER"
 do
     if [[ ! -x "$required" ]]; then
         echo "Required Arcade executable not found:" >&2
@@ -50,11 +60,7 @@ do
 done
 
 
-if [[ ! -f "$BARECRT" ]]; then
-    echo "BareCRT shader not found:" >&2
-    echo "  $BARECRT" >&2
-    exit 1
-fi
+
 
 
 ROM_DIR="$(dirname "$ROM")"
@@ -88,6 +94,11 @@ DISPLAY_LINE="$(
         grep -m1 '<display ' || true
 )"
 
+DISPLAY_TYPE="$(
+    printf '%s\n' "$DISPLAY_LINE" |
+        sed -n 's/.* type="\([^"]*\)".*/\1/p'
+)"
+
 CLONE_OF="$(
     printf '%s\n' "$MACHINE_LINE" |
         sed -n 's/.* cloneof="\([^"]*\)".*/\1/p'
@@ -114,6 +125,52 @@ NATIVE_ROTATE="$(
 )"
 
 FAMILY_ROOT="${CLONE_OF:-$SET_NAME}"
+
+VECTOR_MODE=0
+
+MAME_RENDER_ARGS=()
+
+MAME_VIEW_ARGS=(
+    -view native
+)
+
+if [[ "$DISPLAY_TYPE" == "vector" ]]; then
+
+    # Vector displays have no meaningful native raster geometry.
+    # MAME owns vector beam presentation; Gamescope presents the
+    # finished 1920x1080 surface 1:1.
+    VECTOR_MODE=1
+
+    GEOMETRY_MODE="MAME native vector renderer"
+
+    DISPLAY_WIDTH="$OUTPUT_WIDTH"
+    DISPLAY_HEIGHT="$OUTPUT_HEIGHT"
+
+    BAREFRONT_SCALE=1
+    BAREFRONT_BEAM_AXIS=0
+    BAREFRONT_PHASE_X=0
+    BAREFRONT_PHASE_Y=0
+
+    MAME_GEOMETRY_ARGS=(
+        -resolution "${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}"
+        -keepaspect
+    )
+
+    # Approved BareFront vector Preset B.
+    MAME_RENDER_ARGS=(
+        -beam_width_min 1.00
+        -beam_width_max 4.00
+        -beam_dot_size 1.00
+        -beam_intensity_weight 0.75
+        -flicker 0.15
+    )
+
+    MAME_VIEW_ARGS=(
+        -artpath "$ROOT/artwork"
+        -view auto
+    )
+
+else
 
 GEOMETRY_MODE="native raster / integer pixels"
 
@@ -253,6 +310,8 @@ else
 fi
 
 
+fi
+
 SAVE_ROOT="$ROOT/saves/arcade/mame"
 
 mkdir -p \
@@ -329,19 +388,123 @@ cleanup()
 trap cleanup EXIT INT TERM
 
 
-cat > "$VKBASALT_CONFIG" <<EOF2
-effects = barecrt
-barecrt = $BARECRT
-reshadeIncludePath = $ROOT/assets/shaders/barecrt
-reshadeTexturePath = $ROOT/assets/shaders/barecrt
-enableOnLaunch = True
-toggleKey = F8
-BareFrontScale = ${BAREFRONT_SCALE}.0
-BareFrontBeamAxis = ${BAREFRONT_BEAM_AXIS}.0
-BareFrontPhaseX = ${BAREFRONT_PHASE_X}.0
-BareFrontPhaseY = ${BAREFRONT_PHASE_Y}.0
-EOF2
+PREFERENCES="${BAREFRONT_SHADER_PREFS:-$ROOT/saves/presentation/shaders.ini}"
 
+SHADER="NONE"
+
+if [[ -f "$PREFERENCES" ]]; then
+    while IFS='=' read -r section value; do
+        if [[ "$section" == "arcade" ]]; then
+            SHADER="${value%$'\r'}"
+        fi
+    done < "$PREFERENCES"
+fi
+
+CONFIGURED_SHADER="$SHADER"
+
+if (( VECTOR_MODE )); then
+    SHADER="NONE"
+fi
+
+EFFECT=""
+SHADER_FILE=""
+INCLUDE_DIR=""
+SETTINGS=""
+
+case "$SHADER" in
+    NONE)
+        ;;
+
+    BARECRT)
+        EFFECT="barecrt"
+        INCLUDE_DIR="$ROOT/assets/shaders/barecrt"
+        SHADER_FILE="$INCLUDE_DIR/BareCRT_v2.fx"
+        SETTINGS="$(printf 'BareFrontScale = %s.0\nBareFrontBeamAxis = %s.0\nBareFrontPhaseX = %s.0\nBareFrontPhaseY = %s.0' "$BAREFRONT_SCALE" "$BAREFRONT_BEAM_AXIS" "$BAREFRONT_PHASE_X" "$BAREFRONT_PHASE_Y")"
+        ;;
+
+    CRT-LITE)
+        EFFECT="CRT_Lite"
+        INCLUDE_DIR="$ROOT/assets/shaders/crt-lite"
+        SHADER_FILE="$INCLUDE_DIR/CRT_Lite.fx"
+        SETTINGS="SCANLINE_COUNT = 0.0"
+        ;;
+
+    CRT-LOTTES)
+        EFFECT="CRT_Lottes"
+        INCLUDE_DIR="$ROOT/assets/shaders/crt-lottes"
+        SHADER_FILE="$INCLUDE_DIR/CRT_Lottes.fx"
+        SETTINGS="$(printf 'fDownscale = %s.0\nfBlur = 2.6' "$BAREFRONT_SCALE")"
+        ;;
+
+    *)
+        echo "STOP: Invalid Arcade shader preference: $SHADER" >&2
+        exit 1
+        ;;
+esac
+
+if [[ "$SHADER" != "NONE" ]]; then
+    for required in "$SHADER_FILE" "$INCLUDE_DIR/ReShade.fxh"; do
+        if [[ ! -f "$required" ]]; then
+            echo "STOP: Missing shader dependency: $required" >&2
+            exit 1
+        fi
+    done
+
+    if [[ "$SHADER" == "CRT-LOTTES" &&
+          ! -f "$INCLUDE_DIR/CRT_Lottes.fxh" ]]; then
+        echo "STOP: CRT_Lottes.fxh is missing." >&2
+        exit 1
+    fi
+fi
+
+if (( VECTOR_MODE )); then
+    echo "Display type: vector"
+    echo "Presentation: MAME-owned vector rendering"
+    echo "Surface: ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}"
+    echo "External shader: bypassed"
+    echo "Saved Arcade shader: $CONFIGURED_SHADER"
+    echo "MAME vector preset: Preset B"
+    echo "Beam width: 1.00 -> 4.00"
+    echo "Intensity weight: 0.75"
+    echo "Dot size: 1.00"
+    echo "Flicker: 0.15"
+else
+    echo "Display type: raster"
+    echo "Shader: $SHADER"
+    echo "Raster: ${DISPLAY_WIDTH}x${DISPLAY_HEIGHT}"
+    echo "Integer scale: ${BAREFRONT_SCALE}x"
+fi
+
+if [[ "$SHADER" == "NONE" ]]; then
+    echo "vkBasalt: disabled"
+else
+    echo "vkBasalt: enabled"
+    echo "Shader file: $SHADER_FILE"
+fi
+
+if [[ "$MODE" == "--dry-run" ]]; then
+    echo "PASS: Dry run only — no game launched."
+    exit 0
+fi
+
+if [[ "$SHADER" == "NONE" ]]; then
+    LAUNCH_ENV=(env -u VKBASALT_CONFIG_FILE ENABLE_VKBASALT=0)
+else
+    cat > "$VKBASALT_CONFIG" <<CONF
+effects = $EFFECT
+$EFFECT = $SHADER_FILE
+reshadeIncludePath = $INCLUDE_DIR
+reshadeTexturePath = $INCLUDE_DIR
+enableOnLaunch = True
+$SETTINGS
+CONF
+
+    LAUNCH_ENV=(
+        env
+        ENABLE_VKBASALT=1
+        VKBASALT_CONFIG_FILE="$VKBASALT_CONFIG"
+    )
+fi
 
 echo "Starting Arcade through BareFront..."
 echo "  Set:          $SET_NAME"
@@ -353,7 +516,7 @@ echo "  Geometry:     $GEOMETRY_MODE"
 echo "  Filtering:    disabled"
 echo "  Gamescope:    dynamic integer scale into ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}"
 echo "  Scale filter: nearest"
-echo "  CRT:          BareCRT v2"
+echo "  Shader:       $SHADER"
 echo "  CRT raster:   ${DISPLAY_WIDTH}x${DISPLAY_HEIGHT}"
 echo "  CRT scale:    ${BAREFRONT_SCALE}x"
 echo "  CRT axis:     $([[ "$BAREFRONT_BEAM_AXIS" == "1" ]] && echo vertical || echo horizontal)"
@@ -370,9 +533,7 @@ PANELS_HIDDEN=1
 sleep 1
 
 
-env \
-    ENABLE_VKBASALT=1 \
-    VKBASALT_CONFIG_FILE="$VKBASALT_CONFIG" \
+"${LAUNCH_ENV[@]}" \
     "$GAMESCOPE" \
         -b \
         -g \
@@ -381,6 +542,32 @@ env \
         -S integer \
         -F nearest \
         -- \
+        /bin/bash -c '
+            guide="$1"
+            shift
+
+            BAREFRONT_MAME_GUIDE_SESSION=1 "$guide" &
+            guide_pid=$!
+
+            "$@" &
+            game_pid=$!
+
+            cleanup() {
+                kill -TERM "$guide_pid" 2>/dev/null || true
+                wait "$guide_pid" 2>/dev/null || true
+            }
+
+            trap cleanup EXIT
+
+            if wait "$game_pid"; then
+                status=0
+            else
+                status=$?
+            fi
+
+            exit "$status"
+        ' _ \
+        "$GUIDE_EXIT_HELPER" \
         "$MAME" \
             "$SET_NAME" \
             -rompath "$ROMPATH" \
@@ -394,8 +581,9 @@ env \
             -video opengl \
             -nofilter \
             -prescale 1 \
+            "${MAME_RENDER_ARGS[@]}" \
             "${MAME_GEOMETRY_ARGS[@]}" \
-            -view native &
+            "${MAME_VIEW_ARGS[@]}" &
 
 GAMESCOPE_PID=$!
 

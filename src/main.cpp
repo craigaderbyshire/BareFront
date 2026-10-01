@@ -487,27 +487,30 @@ loadMameDisplayTitles(
 
 
         // MAME descriptions commonly append machine/set metadata
-        // in a final parenthesised suffix, for example:
+        // in one or more final parenthesised suffixes, for example:
         //
         // Donkey Kong (US set 1)
         // Out Run (sitdown/upright, Rev B)
-        // Wonder Boy (set 1, 315-5177)
+        // Golden Axe (set 6, US) (8751 317-123A)
         //
-        // Keep MAME's authoritative title, but hide that final
-        // set/revision detail from BareFront's display only.
-        if (!description.empty() &&
-            description.back() == ')')
+        // Keep MAME's authoritative title, but hide all trailing
+        // set/revision/hardware qualifier groups from BareFront's
+        // display only.
+        while (!description.empty() &&
+               description.back() == ')')
         {
             std::size_t suffixStart =
                 description.rfind(" (");
 
-            if (suffixStart !=
+            if (suffixStart ==
                 std::string::npos)
             {
-                description.erase(
-                    suffixStart
-                );
+                break;
             }
+
+            description.erase(
+                suffixStart
+            );
         }
 
 
@@ -4470,7 +4473,7 @@ int main()
             "ARCADE",
             "arcade",
             "assets/systems/arcade.png",
-            "testroms/arcade",
+            "roms/arcade",
             "assets/games/arcade",
             { ".zip", ".7z" }
         },
@@ -5547,7 +5550,8 @@ int main()
                              systems[activeSystemIndex].configSection == "nes" ||
                              systems[activeSystemIndex].configSection == "ps1" ||
                              systems[activeSystemIndex].configSection == "saturn" ||
-                             systems[activeSystemIndex].configSection == "pcengine")
+                             systems[activeSystemIndex].configSection == "pcengine" ||
+                             systems[activeSystemIndex].configSection == "arcade")
                         {
                             curatedCollectionNames =
                                 bflibrary::collectionNames(systems[activeSystemIndex].configSection);
@@ -5688,11 +5692,11 @@ int main()
 
 
                         screen =
-                            ((activeSection == "dreamcast" || activeSection == "nes" || activeSection == "ps1" || activeSection == "saturn" || activeSection == "pcengine"))
+                            ((activeSection == "dreamcast" || activeSection == "nes" || activeSection == "ps1" || activeSection == "saturn" || activeSection == "pcengine" || activeSection == "arcade"))
                                 ? Screen::Collections
                                 : Screen::Games;
 
-                        if ((activeSection == "dreamcast" || activeSection == "nes" || activeSection == "ps1" || activeSection == "saturn" || activeSection == "pcengine"))
+                        if ((activeSection == "dreamcast" || activeSection == "nes" || activeSection == "ps1" || activeSection == "saturn" || activeSection == "pcengine" || activeSection == "arcade"))
                         {
                             // The Collections screen needs no game preview.
                             videoPlayer.stop();
@@ -5777,6 +5781,33 @@ int main()
                                     entry.game.titlePath
                                 )
                             );
+                        }
+
+                        if (systems[activeSystemIndex].configSection == "arcade" ||
+                            systems[activeSystemIndex].configSection == "neogeo")
+                        {
+                            auto mameTitles =
+                                loadMameDisplayTitles(
+                                    games
+                                );
+
+                            for (std::size_t index = 0;
+                                 index < games.size();
+                                 ++index)
+                            {
+                                auto found =
+                                    mameTitles.find(
+                                        games[index]
+                                            .stem()
+                                            .string()
+                                    );
+
+                                if (found != mameTitles.end())
+                                {
+                                    gameDisplayTitles[index] =
+                                        found->second;
+                                }
+                            }
                         }
 
                         gameSelected = 0;

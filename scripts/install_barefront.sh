@@ -5990,6 +5990,62 @@ MAME_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mame.sh"
 MAME_ARCADE_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mame_arcade.sh"
 MAME_NEOGEO_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mame_neogeo.sh"
 
+# ------------------------------------------------------------
+# MAME Guide exit helper — Xbox Guide
+# ------------------------------------------------------------
+
+MAME_GUIDE_SOURCE="$BAREFRONT_DIR/src/mame_guide_exit_helper.cpp"
+MAME_GUIDE_DIR="$BAREFRONT_DIR/emulators/mame"
+MAME_GUIDE_HELPER="$MAME_GUIDE_DIR/mame_guide_exit_helper"
+
+if [[ ! -f "$MAME_GUIDE_SOURCE" ]]; then
+    die "MAME Guide helper source is missing: $MAME_GUIDE_SOURCE"
+fi
+
+if ! command -v g++ >/dev/null 2>&1 ||
+   ! command -v sdl2-config >/dev/null 2>&1
+then
+    die "MAME Guide helper build dependencies are missing."
+fi
+
+mkdir -p "$MAME_GUIDE_DIR"
+
+if [[ ! -x "$MAME_GUIDE_HELPER" ]] ||
+   [[ "$MAME_GUIDE_SOURCE" -nt "$MAME_GUIDE_HELPER" ]]
+then
+    echo
+    echo "Building MAME Xbox Guide exit helper..."
+
+    MAME_GUIDE_CANDIDATE="$(
+        mktemp "$MAME_GUIDE_DIR/.mame-guide-build.XXXXXX"
+    )"
+
+    if ! g++ -std=c++17 -O2 \
+        "$MAME_GUIDE_SOURCE" \
+        -o "$MAME_GUIDE_CANDIDATE" \
+        $(sdl2-config --cflags --libs) \
+        -lX11 -lXtst
+    then
+        rm -f -- "$MAME_GUIDE_CANDIDATE"
+        die "MAME Guide helper compilation failed."
+    fi
+
+    chmod 755 "$MAME_GUIDE_CANDIDATE"
+    mv -fT "$MAME_GUIDE_CANDIDATE" "$MAME_GUIDE_HELPER"
+
+    echo "Action: BUILD"
+else
+    echo
+    echo "MAME Guide exit helper is already current."
+    echo "Action: SKIP"
+fi
+
+if [[ ! -x "$MAME_GUIDE_HELPER" ]]; then
+    die "MAME Guide exit helper build failed."
+fi
+
+
+
 mkdir -p "$BAREFRONT_DIR/scripts"
 mkdir -p "$VICE_HOTKEY_DIR"
 
