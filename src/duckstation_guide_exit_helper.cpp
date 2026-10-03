@@ -12,6 +12,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace
@@ -21,6 +22,125 @@ volatile std::sig_atomic_t stopRequested = 0;
 void requestStop(int)
 {
     stopRequested = 1;
+}
+
+bool requestDuckStationExit(bool probe)
+{
+    if (probe)
+    {
+        std::cout
+            << "PROBE: Guide held 1500 ms; SIGTERM NOT sent\n";
+        std::cout.flush();
+        return false;
+    }
+
+    Display* display = XOpenDisplay(nullptr);
+
+    if (!display)
+    {
+        std::cerr << "Cannot open nested X display\n";
+        return false;
+    }
+
+    Window focused;
+    int revert;
+
+    XGetInputFocus(display, &focused, &revert);
+
+    if (focused == None ||
+        focused == PointerRoot)
+    {
+        std::cerr << "No focused emulator window\n";
+        XCloseDisplay(display);
+        return false;
+    }
+
+    const Atom pidAtom =
+        XInternAtom(display, "_NET_WM_PID", True);
+
+    if (pidAtom == None)
+    {
+        std::cerr << "_NET_WM_PID atom unavailable\n";
+        XCloseDisplay(display);
+        return false;
+    }
+
+    Atom actualType = None;
+    int actualFormat = 0;
+    unsigned long itemCount = 0;
+    unsigned long bytesAfter = 0;
+    unsigned char* data = nullptr;
+
+    const int propertyResult =
+        XGetWindowProperty(
+            display,
+            focused,
+            pidAtom,
+            0,
+            1,
+            False,
+            XA_CARDINAL,
+            &actualType,
+            &actualFormat,
+            &itemCount,
+            &bytesAfter,
+            &data
+        );
+
+    if (propertyResult != Success ||
+        !data ||
+        actualType != XA_CARDINAL ||
+        actualFormat != 32 ||
+        itemCount != 1)
+    {
+        std::cerr
+            << "Focused window has no valid _NET_WM_PID\n";
+
+        if (data)
+            XFree(data);
+
+        XCloseDisplay(display);
+        return false;
+    }
+
+    const unsigned long rawPid =
+        *reinterpret_cast<unsigned long*>(data);
+
+    XFree(data);
+    XCloseDisplay(display);
+
+    const pid_t targetPid =
+        static_cast<pid_t>(rawPid);
+
+    if (targetPid <= 1 ||
+        static_cast<unsigned long>(targetPid) != rawPid)
+    {
+        std::cerr
+            << "Invalid DuckStation target PID "
+            << rawPid
+            << "\n";
+        return false;
+    }
+
+    std::cout
+        << "Sending SIGTERM to DuckStation AppRun PID "
+        << targetPid
+        << "\n";
+    std::cout.flush();
+
+    if (::kill(targetPid, SIGTERM) != 0)
+    {
+        std::cerr
+            << "Failed to send SIGTERM to PID "
+            << targetPid
+            << "\n";
+        return false;
+    }
+
+    std::cout << "SIGTERM sent\n";
+    std::cout.flush();
+
+    return true;
 }
 }
 
@@ -106,7 +226,9 @@ int main()
         << (std::getenv("DISPLAY")
                 ? std::getenv("DISPLAY")
                 : "unset")
-        << "\n";
+        << "\n"
+        << "Quick Guide tap -> ignored\n"
+        << "Guide hold: 1500 ms -> Exit\n";
 
     std::cout.flush();
 
@@ -115,8 +237,36 @@ int main()
     Uint64 lastDiscAction = 0;
     bool hadDiscAction = false;
 
+    constexpr Uint64 GUIDE_HOLD_MS = 1500;
+
+    std::unordered_map<SDL_JoystickID, Uint64> guideStarted;
+    std::unordered_set<SDL_JoystickID> guideFired;
+
     while (!stopRequested)
     {
+        const Uint64 now = SDL_GetTicks64();
+
+        for (const auto& guide : guideStarted)
+        {
+            if (!guideFired.count(guide.first) &&
+                now - guide.second >= GUIDE_HOLD_MS)
+            {
+                guideFired.insert(guide.first);
+
+                std::cout << "Guide hold detected\n";
+                std::cout.flush();
+
+                if (requestDuckStationExit(probe))
+                {
+                    stopRequested = 1;
+                    break;
+                }
+            }
+        }
+
+        if (stopRequested)
+            break;
+
         // Wake periodically so Ctrl+C does not leave
         // the helper blocked waiting for controller input.
         if (!SDL_WaitEventTimeout(&event, 100))
@@ -129,6 +279,23 @@ int main()
             break;
 
         if (event.type == SDL_CONTROLLERBUTTONUP &&
+            event.cbutton.button == SDL_CONTROLLER_BUTTON_MISC1)
+        {
+            const SDL_JoystickID id = event.cbutton.which;
+
+            if (guideStarted.count(id) &&
+                !guideFired.count(id))
+            {
+                std::cout << "Quick Guide tap ignored\n";
+                std::cout.flush();
+            }
+
+            guideStarted.erase(id);
+            guideFired.erase(id);
+            continue;
+        }
+
+        if (event.type == SDL_CONTROLLERBUTTONUP &&
             event.cbutton.button == SDL_CONTROLLER_BUTTON_Y)
         {
             yHeld.erase(event.cbutton.which);
@@ -138,6 +305,8 @@ int main()
         if (event.type == SDL_CONTROLLERDEVICEREMOVED)
         {
             yHeld.erase(event.cdevice.which);
+            guideStarted.erase(event.cdevice.which);
+            guideFired.erase(event.cdevice.which);
             continue;
         }
 
@@ -282,125 +451,21 @@ int main()
             continue;
         }
 
-        // Probe mode must never signal DuckStation.
-        if (probe)
+        const SDL_JoystickID id =
+            event.cbutton.which;
+
+        if (!guideStarted.count(id))
         {
-            std::cout
-                << "PROBE: Guide detected; SIGTERM NOT sent\n";
+            guideStarted[id] = SDL_GetTicks64();
+            guideFired.erase(id);
+
+            std::cout << "Xbox Guide pressed\n";
             std::cout.flush();
-            continue;
         }
 
-        std::cout << "Xbox Guide detected\n";
-        std::cout.flush();
+        // Exit is deliberately deferred until GUIDE_HOLD_MS.
+        continue;
 
-        Display* display = XOpenDisplay(nullptr);
-
-        if (!display)
-        {
-            std::cerr << "Cannot open nested X display\n";
-            continue;
-        }
-
-        Window focused;
-        int revert;
-
-        XGetInputFocus(display, &focused, &revert);
-
-        if (focused == None ||
-            focused == PointerRoot)
-        {
-            std::cerr << "No focused emulator window\n";
-            XCloseDisplay(display);
-            continue;
-        }
-
-        const Atom pidAtom =
-            XInternAtom(display, "_NET_WM_PID", True);
-
-        if (pidAtom == None)
-        {
-            std::cerr << "_NET_WM_PID atom unavailable\n";
-            XCloseDisplay(display);
-            continue;
-        }
-
-        Atom actualType = None;
-        int actualFormat = 0;
-        unsigned long itemCount = 0;
-        unsigned long bytesAfter = 0;
-        unsigned char* data = nullptr;
-
-        const int propertyResult =
-            XGetWindowProperty(
-                display,
-                focused,
-                pidAtom,
-                0,
-                1,
-                False,
-                XA_CARDINAL,
-                &actualType,
-                &actualFormat,
-                &itemCount,
-                &bytesAfter,
-                &data
-            );
-
-        if (propertyResult != Success ||
-            !data ||
-            actualType != XA_CARDINAL ||
-            actualFormat != 32 ||
-            itemCount != 1)
-        {
-            std::cerr
-                << "Focused window has no valid _NET_WM_PID\n";
-
-            if (data)
-                XFree(data);
-
-            XCloseDisplay(display);
-            continue;
-        }
-
-        const unsigned long rawPid =
-            *reinterpret_cast<unsigned long*>(data);
-
-        XFree(data);
-        XCloseDisplay(display);
-
-        const pid_t targetPid =
-            static_cast<pid_t>(rawPid);
-
-        if (targetPid <= 1 ||
-            static_cast<unsigned long>(targetPid) != rawPid)
-        {
-            std::cerr
-                << "Invalid DuckStation target PID "
-                << rawPid
-                << "\n";
-            continue;
-        }
-
-        std::cout
-            << "Sending SIGTERM to DuckStation AppRun PID "
-            << targetPid
-            << "\n";
-        std::cout.flush();
-
-        if (::kill(targetPid, SIGTERM) != 0)
-        {
-            std::cerr
-                << "Failed to send SIGTERM to PID "
-                << targetPid
-                << "\n";
-            continue;
-        }
-
-        std::cout << "SIGTERM sent\n";
-        std::cout.flush();
-
-        break;
     }
 
     for (auto* controller : controllers)
