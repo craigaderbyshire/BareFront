@@ -4114,7 +4114,9 @@ BIGPEMU_LAUNCHER="$BIGPEMU_DIR/BigPEmu"
 BIGPEMU_WRAPPER="$BAREFRONT_DIR/scripts/launch_bigpemu.sh"
 BIGPEMU_ESC_SOURCE="$BAREFRONT_DIR/src/bigpemu_esc_helper.cpp"
 BIGPEMU_ESC_HELPER="$BIGPEMU_DIR/bigpemu_esc_helper"
-BIGPEMU_GAMESCOPE="/usr/games/gamescope"
+BIGPEMU_GUIDE_SOURCE="$BAREFRONT_DIR/src/bigpemu_guide_exit_helper.cpp"
+BIGPEMU_GUIDE_HELPER="$BIGPEMU_DIR/bigpemu_guide_exit_helper"
+BIGPEMU_GAMESCOPE="$BAREFRONT_DIR/runtime/presentation/gamescope/gamescope"
 BIGPEMU_OVERLAY="$BAREFRONT_DIR/assets/overlays/jaguar.png"
 
 # BigPEmu does not currently publish releases through a package
@@ -4413,12 +4415,57 @@ if [[ ! -x "$BIGPEMU_ESC_HELPER" ]]; then
     die "BigPEmu Esc helper build failed."
 fi
 
+# ------------------------------------------------------------
+# BigPEmu Xbox Guide exit helper
+# ------------------------------------------------------------
+
+if [[ ! -f "$BIGPEMU_GUIDE_SOURCE" ]]; then
+    die "BigPEmu Guide helper source is missing."
+fi
+
+if ! command -v g++ >/dev/null 2>&1 ||
+   ! command -v pkg-config >/dev/null 2>&1 ||
+   ! pkg-config --exists sdl2
+then
+    die "BigPEmu Guide helper build dependencies are missing."
+fi
+
+if [[ ! -x "$BIGPEMU_GUIDE_HELPER" ]] ||
+   [[ "$BIGPEMU_GUIDE_SOURCE" -nt "$BIGPEMU_GUIDE_HELPER" ]]
+then
+    echo
+    echo "Building BigPEmu Xbox Guide helper..."
+
+    BIGPEMU_GUIDE_TEMP="$(mktemp "$BIGPEMU_DIR/.bigpemu-guide.XXXXXX")"
+
+    if ! g++ -std=c++17 -O2 -Wall -Wextra \
+        "$BIGPEMU_GUIDE_SOURCE" \
+        -o "$BIGPEMU_GUIDE_TEMP" \
+        $(pkg-config --cflags --libs sdl2)
+    then
+        rm -f -- "$BIGPEMU_GUIDE_TEMP"
+        die "BigPEmu Guide helper compilation failed."
+    fi
+
+    chmod 0755 "$BIGPEMU_GUIDE_TEMP"
+    mv -f -- "$BIGPEMU_GUIDE_TEMP" "$BIGPEMU_GUIDE_HELPER"
+
+    echo "BigPEmu Xbox Guide helper built."
+else
+    echo "BigPEmu Xbox Guide helper already built."
+fi
+
+if [[ ! -x "$BIGPEMU_GUIDE_HELPER" ]]; then
+    die "BigPEmu Guide helper verification failed."
+fi
+
 echo
 echo "BareFront Jaguar launcher:"
 echo "  $BIGPEMU_WRAPPER"
 echo
 echo "BareFront-owned controls:"
 echo "  Esc = return directly to BareFront"
+echo "  Xbox Guide = return directly to BareFront"
 
 echo
 echo "BigPEmu needs no mandatory Jaguar BIOS for normal"
