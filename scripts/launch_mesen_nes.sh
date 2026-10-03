@@ -8,7 +8,10 @@ MODE="${2:-}"
 MESEN="$ROOT/emulators/mesen/Mesen"
 MENU_NUDGE_HELPER="$ROOT/emulators/mesen/mesen_menu_nudge_helper"
 GUIDE_EXIT_HELPER="$ROOT/emulators/mesen/mesen_guide_exit_helper"
-GAMESCOPE="/usr/games/gamescope"
+source "$ROOT/scripts/barefront_presentation_runtime.sh"
+barefront_resolve_presentation_runtime "$ROOT"
+GAMESCOPE="$BAREFRONT_GAMESCOPE"
+export VK_IMPLICIT_LAYER_PATH="$BAREFRONT_VKBASALT_LAYER_DIR"
 
 NATIVE_WIDTH=256
 NATIVE_HEIGHT=240
