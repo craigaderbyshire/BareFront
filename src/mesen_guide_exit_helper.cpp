@@ -4,23 +4,109 @@
 #include <X11/keysym.h>
 #include <X11/extensions/XTest.h>
 
+#include <csignal>
 #include <cstdlib>
 #include <iostream>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
+namespace
+{
+
+volatile std::sig_atomic_t stopRequested = 0;
+
+void requestStop(int)
+{
+    stopRequested = 1;
+}
+
+bool sendEscape()
+{
+    Display* display = XOpenDisplay(nullptr);
+
+    if (!display)
+    {
+        std::cerr << "Cannot open Mesen control display\n";
+        return false;
+    }
+
+    Window focused = None;
+    int revert = 0;
+
+    XGetInputFocus(display, &focused, &revert);
+
+    if (focused == None || focused == PointerRoot)
+    {
+        std::cerr << "No focused Mesen window\n";
+        XCloseDisplay(display);
+        return false;
+    }
+
+    const KeyCode key =
+        XKeysymToKeycode(display, XK_Escape);
+
+    if (!key)
+    {
+        std::cerr << "Escape key unavailable\n";
+        XCloseDisplay(display);
+        return false;
+    }
+
+    XTestFakeKeyEvent(
+        display,
+        key,
+        True,
+        CurrentTime
+    );
+
+    XSync(display, False);
+    SDL_Delay(100);
+
+    XTestFakeKeyEvent(
+        display,
+        key,
+        False,
+        CurrentTime
+    );
+
+    XSync(display, False);
+    XCloseDisplay(display);
+
+    std::cout << "Sent Escape to Mednafen\n";
+    std::cout.flush();
+
+    return true;
+}
+
+}
+
 int main()
 {
-    // Only operate when explicitly started by our
-    // NES Gamescope launcher.
-    const char* session =
+    // Shared BareFront Mesen helper.
+    // NES retains its original session flag; Master System uses
+    // the generic Mesen session flag.
+    const char* nesSession =
         std::getenv("BAREFRONT_NES_GUIDE_SESSION");
 
-    if (!session || std::string(session) != "1")
+    const char* mesenSession =
+        std::getenv("BAREFRONT_MESEN_GUIDE_SESSION");
+
+    const bool armed =
+        (nesSession && std::string(nesSession) == "1") ||
+        (mesenSession && std::string(mesenSession) == "1");
+
+    if (!armed)
     {
-        std::cerr << "Not a BareFront NES session\n";
+        std::cerr
+            << "Not a BareFront Mesen session\n";
+
         return 1;
     }
+
+    std::signal(SIGINT, requestStop);
+    std::signal(SIGTERM, requestStop);
 
     SDL_SetHint(
         SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS,
@@ -35,110 +121,131 @@ int main()
 
     std::vector<SDL_GameController*> controllers;
 
-    auto openControllers = [&]()
+    for (int i = 0; i < SDL_NumJoysticks(); ++i)
     {
-        for (int i = 0; i < SDL_NumJoysticks(); ++i)
+        if (!SDL_IsGameController(i))
+            continue;
+
+        SDL_GameController* controller =
+            SDL_GameControllerOpen(i);
+
+        if (controller)
         {
-            if (!SDL_IsGameController(i))
-                continue;
+            controllers.push_back(controller);
 
-            auto* controller = SDL_GameControllerOpen(i);
-
-            if (controller)
-            {
-                controllers.push_back(controller);
-
-                std::cout
-                    << "Controller: "
-                    << SDL_GameControllerName(controller)
-                    << "\n";
-            }
+            std::cout
+                << "Controller: "
+                << SDL_GameControllerName(controller)
+                << "\n";
         }
-    };
+    }
 
-    openControllers();
+    if (controllers.empty())
+    {
+        std::cerr << "No SDL game controller available\n";
+        SDL_Quit();
+        return 1;
+    }
+
+    constexpr Uint64 GUIDE_HOLD_MS = 1500;
+
+    std::map<SDL_JoystickID, Uint64> guideStarted;
+    std::set<SDL_JoystickID> guideFired;
 
     std::cout
-        << "NES Guide helper active. DISPLAY="
+        << "Mesen controller helper active. DISPLAY="
         << (std::getenv("DISPLAY")
                 ? std::getenv("DISPLAY")
                 : "unset")
-        << "\n";
+        << "\n"
+        << "Quick Guide tap -> ignored\n"
+        << "Guide hold: 1500 ms -> Exit\n";
 
     std::cout.flush();
 
     SDL_Event event;
 
-    while (SDL_WaitEvent(&event))
+    while (!stopRequested)
     {
-        if (event.type != SDL_CONTROLLERBUTTONDOWN)
-            continue;
-
-        // The M7 Xbox controller reports its physical
-        // Guide button as SDL misc1 (raw button 11).
-        if (event.cbutton.button !=
-            SDL_CONTROLLER_BUTTON_MISC1)
+        while (SDL_PollEvent(&event))
         {
-            continue;
+            if (event.type == SDL_QUIT)
+            {
+                stopRequested = 1;
+                break;
+            }
+
+            if (event.type == SDL_CONTROLLERBUTTONDOWN)
+            {
+                const SDL_JoystickID id =
+                    event.cbutton.which;
+
+                if (event.cbutton.button ==
+                    SDL_CONTROLLER_BUTTON_MISC1)
+                {
+                    if (!guideStarted.count(id))
+                    {
+                        guideStarted[id] =
+                            SDL_GetTicks64();
+
+                        guideFired.erase(id);
+                    }
+                }
+            }
+
+            if (event.type == SDL_CONTROLLERBUTTONUP)
+            {
+                const SDL_JoystickID id =
+                    event.cbutton.which;
+
+                if (event.cbutton.button ==
+                    SDL_CONTROLLER_BUTTON_MISC1)
+                {
+                    guideStarted.erase(id);
+                    guideFired.erase(id);
+                }
+            }
+
+            if (event.type ==
+                SDL_CONTROLLERDEVICEREMOVED)
+            {
+                guideStarted.erase(
+                    event.cdevice.which
+                );
+
+                guideFired.erase(
+                    event.cdevice.which
+                );
+            }
         }
 
-        std::cout << "Xbox Guide detected\n";
-        std::cout.flush();
+        const Uint64 now = SDL_GetTicks64();
 
-        Display* display = XOpenDisplay(nullptr);
-
-        if (!display)
+        for (const auto& guide : guideStarted)
         {
-            std::cerr << "Cannot open nested X display\n";
-            continue;
+            if (!guideFired.count(guide.first) &&
+                now - guide.second >= GUIDE_HOLD_MS)
+            {
+                guideFired.insert(guide.first);
+
+                std::cout
+                    << "Guide hold detected\n";
+
+                std::cout.flush();
+
+                sendEscape();
+            }
         }
 
-        Window focused;
-        int revert;
-
-        XGetInputFocus(display, &focused, &revert);
-
-        if (focused == None ||
-            focused == PointerRoot)
-        {
-            std::cerr << "No focused emulator window\n";
-            XCloseDisplay(display);
-            continue;
-        }
-
-        KeyCode key =
-            XKeysymToKeycode(display, XK_Escape);
-
-        if (!key)
-        {
-            std::cerr << "Escape key unavailable\n";
-            XCloseDisplay(display);
-            continue;
-        }
-
-        std::cout << "Sending Escape to Mesen\n";
-        std::cout.flush();
-
-        XTestFakeKeyEvent(display, key, True, 0);
-        XSync(display, False);
-
-        SDL_Delay(100);
-
-        XTestFakeKeyEvent(display, key, False, 0);
-        XSync(display, False);
-
-        XCloseDisplay(display);
-
-        std::cout << "Escape sent\n";
-        std::cout.flush();
-
-        break;
+        SDL_Delay(10);
     }
 
-    for (auto* controller : controllers)
+    for (SDL_GameController* controller :
+         controllers)
+    {
         SDL_GameControllerClose(controller);
+    }
 
     SDL_Quit();
-
     return 0;
 }
