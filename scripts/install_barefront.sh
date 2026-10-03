@@ -4484,10 +4484,14 @@ echo "BigPEmu stage complete."
 heading "STAGE 3B / DOLPHIN"
 
 DOLPHIN_EXE="/usr/games/dolphin-emu"
-DOLPHIN_GAMESCOPE="/usr/games/gamescope"
+DOLPHIN_GAMESCOPE="$BAREFRONT_DIR/runtime/presentation/gamescope/gamescope"
 DOLPHIN_WRAPPER="$BAREFRONT_DIR/scripts/launch_dolphin.sh"
 DOLPHIN_USER_DIR="$BAREFRONT_DIR/saves/gamecube/dolphin"
 DOLPHIN_OVERLAY="$BAREFRONT_DIR/assets/overlays/gamecube.png"
+DOLPHIN_GUIDE_SOURCE="$BAREFRONT_DIR/src/dolphin_guide_exit_helper.cpp"
+DOLPHIN_GUIDE_HELPER="$BAREFRONT_DIR/emulators/dolphin/dolphin_guide_exit_helper"
+DOLPHIN_GCPAD_BASELINE="$BAREFRONT_DIR/assets/config/dolphin/GCPadNew.ini"
+DOLPHIN_GCPAD="$DOLPHIN_USER_DIR/Config/GCPadNew.ini"
 
 if [[ ! -x "$DOLPHIN_EXE" ]]; then
     die "Dolphin executable not found: $DOLPHIN_EXE"
@@ -4509,6 +4513,7 @@ mkdir -p \
     "$BAREFRONT_DIR/bios/gamecube/EUR" \
     "$BAREFRONT_DIR/bios/gamecube/USA" \
     "$BAREFRONT_DIR/bios/gamecube/JAP" \
+    "$DOLPHIN_USER_DIR/Config" \
     "$DOLPHIN_USER_DIR/GC/EUR" \
     "$DOLPHIN_USER_DIR/GC/USA" \
     "$DOLPHIN_USER_DIR/GC/JAP"
@@ -4528,11 +4533,118 @@ for REGION in EUR USA JAP; do
     fi
 done
 
+
+# BareFront Dolphin Xbox controller baseline
+#
+# Fresh installs receive the live-tested Xbox Series X mapping.
+#
+# Existing configs are deliberately preserved unless they match
+# the exact legacy Dolphin keyboard/pointer default previously
+# created on BareFront.
+#
+# Xbox Guide is deliberately absent: Guide belongs to BareFront.
+
+if [[ ! -s "$DOLPHIN_GCPAD_BASELINE" ]]; then
+    die "Dolphin controller baseline missing: $DOLPHIN_GCPAD_BASELINE"
+fi
+
+DOLPHIN_GCPAD_BASELINE_SHA="$(
+    sha256sum "$DOLPHIN_GCPAD_BASELINE" |
+        awk '{print $1}'
+)"
+
+if [[ "$DOLPHIN_GCPAD_BASELINE_SHA" != "f80deb6cc14be94596416588e2832ac27ea14ee52e557f5d602a46e461fd3071" ]]; then
+    die "Unexpected Dolphin controller baseline."
+fi
+
+DOLPHIN_GCPAD_LEGACY_DEFAULT_SHA="f9dd132d66bef1f658237fcca72d927a2d815c61f69666ddd36abdb6a2ce48a0"
+
+if [[ ! -e "$DOLPHIN_GCPAD" ]]; then
+    install -m 0644 \
+        "$DOLPHIN_GCPAD_BASELINE" \
+        "$DOLPHIN_GCPAD"
+
+    echo "  Xbox controller mapping: CREATED"
+
+elif [[ -f "$DOLPHIN_GCPAD" ]]; then
+    DOLPHIN_GCPAD_SHA="$(
+        sha256sum "$DOLPHIN_GCPAD" |
+            awk '{print $1}'
+    )"
+
+    if [[ "$DOLPHIN_GCPAD_SHA" == "$DOLPHIN_GCPAD_BASELINE_SHA" ]]; then
+        echo "  Xbox controller mapping: CURRENT"
+
+    elif [[ "$DOLPHIN_GCPAD_SHA" == "$DOLPHIN_GCPAD_LEGACY_DEFAULT_SHA" ]]; then
+        install -m 0644 \
+            "$DOLPHIN_GCPAD_BASELINE" \
+            "$DOLPHIN_GCPAD"
+
+        echo "  Xbox controller mapping: UPGRADED"
+
+    else
+        echo "  Xbox controller mapping: PRESERVE CUSTOM"
+    fi
+
+else
+    echo "  Xbox controller mapping: PRESERVE NON-REGULAR PATH"
+fi
+
+# End BareFront Dolphin Xbox controller baseline
+
+
+if [[ ! -f "$DOLPHIN_GUIDE_SOURCE" ]]; then
+    die "Dolphin Guide helper source missing: $DOLPHIN_GUIDE_SOURCE"
+fi
+
+if ! command -v g++ >/dev/null 2>&1; then
+    die "g++ is required for the Dolphin Guide helper."
+fi
+
+if ! pkg-config --exists sdl2 x11 xtst; then
+    die "Dolphin Guide helper build dependencies are missing."
+fi
+
+DOLPHIN_GUIDE_DIR="$(dirname "$DOLPHIN_GUIDE_HELPER")"
+mkdir -p "$DOLPHIN_GUIDE_DIR"
+
+if [[ ! -x "$DOLPHIN_GUIDE_HELPER" ]] ||
+   [[ "$DOLPHIN_GUIDE_SOURCE" -nt "$DOLPHIN_GUIDE_HELPER" ]]
+then
+    echo
+    echo "Building Dolphin Xbox Guide helper..."
+
+    DOLPHIN_GUIDE_TEMP="$(
+        mktemp "$DOLPHIN_GUIDE_DIR/.dolphin-guide.XXXXXX"
+    )"
+
+    if ! g++ -std=c++17 -O2 -Wall -Wextra \
+        "$DOLPHIN_GUIDE_SOURCE" \
+        -o "$DOLPHIN_GUIDE_TEMP" \
+        $(pkg-config --cflags --libs sdl2 x11 xtst)
+    then
+        rm -f -- "$DOLPHIN_GUIDE_TEMP"
+        die "Dolphin Guide helper compilation failed."
+    fi
+
+    chmod 0755 "$DOLPHIN_GUIDE_TEMP"
+    mv -f -- "$DOLPHIN_GUIDE_TEMP" "$DOLPHIN_GUIDE_HELPER"
+
+    echo "Dolphin Xbox Guide helper built."
+else
+    echo "Dolphin Xbox Guide helper already built."
+fi
+
+if [[ ! -x "$DOLPHIN_GUIDE_HELPER" ]]; then
+    die "Dolphin Guide helper verification failed."
+fi
+
 echo "Verifying Dolphin integration..."
 echo "  System executable: OK"
 echo "  Gamescope: OK"
 echo "  BareFront launcher: OK"
 echo "  Presentation overlay: OK"
+echo "  Xbox Guide helper: OK"
 echo "  IPL links: OK"
 echo
 echo "Dolphin integration stage complete."
