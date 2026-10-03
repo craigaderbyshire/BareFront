@@ -3,11 +3,20 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MODE=""
+if [[ "${1:-}" == "--dry-run" ]]; then
+    MODE="--dry-run"
+    shift
+fi
 ROM="${1:-}"
 
 VICE="/usr/bin/x64sc"
-GAMESCOPE="/usr/games/gamescope"
+source "$ROOT/scripts/barefront_presentation_runtime.sh"
+barefront_resolve_presentation_runtime "$ROOT"
+GAMESCOPE="$BAREFRONT_GAMESCOPE"
+export VK_IMPLICIT_LAYER_PATH="$BAREFRONT_VKBASALT_LAYER_DIR"
 PRESENTATION_HELPER="$ROOT/c64_presentation_helper"
+GUIDE_HELPER="$ROOT/emulators/vice/vice_guide_exit_helper"
 
 NATIVE_WIDTH=408
 NATIVE_HEIGHT=293
@@ -57,7 +66,8 @@ fi
 for required in \
     "$VICE" \
     "$GAMESCOPE" \
-    "$PRESENTATION_HELPER"
+    "$PRESENTATION_HELPER" \
+    "$GUIDE_HELPER"
 do
     if [[ ! -x "$required" ]]; then
         echo "Required C64 executable not found:" >&2
@@ -102,6 +112,93 @@ fi
 #
 # The original mode/rate is restored when VICE exits.
 # ------------------------------------------------------------
+
+# ------------------------------------------------------------
+# Per-system CRT selection.
+#
+# The C64 bezel is always the final effect, including NONE.
+# NONE disables CRT treatment, not the selected C64 artwork.
+# ------------------------------------------------------------
+
+PREFERENCES="${BAREFRONT_SHADER_PREFS:-$ROOT/saves/presentation/shaders.ini}"
+SHADER="NONE"
+
+if [[ -f "$PREFERENCES" ]]; then
+    while IFS='=' read -r key value; do
+        if [[ "$key" == "c64" ]]; then
+            SHADER="${value%$'\\r'}"
+        fi
+    done < "$PREFERENCES"
+fi
+
+EFFECTS="c64bezel"
+CRT_DECLARATION=""
+CRT_INCLUDE_DIR="$ROOT/assets/shaders/barecrt"
+CRT_SETTINGS=""
+CRT_SHADER_FILE=""
+
+case "$SHADER" in
+    NONE)
+        ;;
+
+    BARECRT)
+        EFFECTS="barecrt:c64bezel"
+        CRT_SHADER_FILE="$BARECRT_SHADER"
+        CRT_DECLARATION="barecrt = $CRT_SHADER_FILE"
+        CRT_SETTINGS="$(printf '%s\n' 'BareFrontScale = 3.0' 'BareFrontPhaseY = 1.0')"
+        ;;
+
+    CRT-LITE)
+        EFFECTS="CRT_Lite:c64bezel"
+        CRT_INCLUDE_DIR="$ROOT/assets/shaders/crt-lite"
+        CRT_SHADER_FILE="$CRT_INCLUDE_DIR/CRT_Lite.fx"
+        CRT_DECLARATION="CRT_Lite = $CRT_SHADER_FILE"
+        CRT_SETTINGS="SCANLINE_COUNT = 0.0"
+        ;;
+
+    CRT-LOTTES)
+        EFFECTS="CRT_Lottes:c64bezel"
+        CRT_INCLUDE_DIR="$ROOT/assets/shaders/crt-lottes"
+        CRT_SHADER_FILE="$CRT_INCLUDE_DIR/CRT_Lottes.fx"
+        CRT_DECLARATION="CRT_Lottes = $CRT_SHADER_FILE"
+        CRT_SETTINGS="$(printf '%s\n' 'fDownscale = 3.0' 'fBlur = 2.6')"
+        ;;
+
+    *)
+        echo "STOP: Invalid C64 shader preference: $SHADER" >&2
+        exit 1
+        ;;
+esac
+
+if [[ ! -f "$CRT_INCLUDE_DIR/ReShade.fxh" ]]; then
+    echo "STOP: Missing C64 shader include dependency." >&2
+    exit 1
+fi
+
+if [[ -n "$CRT_SHADER_FILE" &&
+      ! -f "$CRT_SHADER_FILE" ]]; then
+    echo "STOP: Missing selected C64 shader: $CRT_SHADER_FILE" >&2
+    exit 1
+fi
+
+if [[ "$SHADER" == "CRT-LOTTES" &&
+      ! -f "$CRT_INCLUDE_DIR/CRT_Lottes.fxh" ]]; then
+    echo "STOP: Missing CRT_Lottes.fxh" >&2
+    exit 1
+fi
+
+echo "Shader: $SHADER"
+echo "Effects: $EFFECTS"
+echo "CRT include: $CRT_INCLUDE_DIR"
+
+if [[ -n "$CRT_SETTINGS" ]]; then
+    printf '%s\n' "$CRT_SETTINGS"
+fi
+
+if [[ "$MODE" == "--dry-run" ]]; then
+    echo "PASS: Dry run only — no display changes or game launch."
+    exit 0
+fi
 
 XRANDR_STATE="$(xrandr --query)"
 
@@ -292,7 +389,7 @@ echo "  Surface:     ${NATIVE_WIDTH}x${NATIVE_HEIGHT}"
 echo "  Gamescope:   ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}"
 echo "  Scaling:     integer / nearest"
 echo "  Borders:     full"
-echo "  CRT:         BareCRT"
+echo "  Shader:      $SHADER"
 echo "  Bezel:       black"
 
 
@@ -368,17 +465,16 @@ sleep 3
 # ------------------------------------------------------------
 
 cat > "$VKBASALT_CONFIG" <<EOF2
-effects = barecrt:c64bezel
+effects = $EFFECTS
 
-barecrt = $BARECRT_SHADER
+$CRT_DECLARATION
 c64bezel = $BEZEL_SHADER
 
-reshadeIncludePath = $ROOT/assets/shaders/barecrt
+reshadeIncludePath = $CRT_INCLUDE_DIR
 reshadeTexturePath = $C64_TEXTURE_DIR
 
 enableOnLaunch = True
-BareFrontScale = 3.0
-BareFrontPhaseY = 1.0
+$CRT_SETTINGS
 EOF2
 
 
@@ -491,6 +587,32 @@ env \
         -S integer \
         -F nearest \
         -- \
+        /bin/bash -c '
+              guide="$1"
+              shift
+
+              BAREFRONT_C64_GUIDE_SESSION=1 "$guide" &
+              guide_pid=$!
+
+              "$@" &
+              game_pid=$!
+
+              cleanup() {
+                  kill -TERM "$guide_pid" 2>/dev/null || true
+                  wait "$guide_pid" 2>/dev/null || true
+              }
+
+              trap cleanup EXIT
+
+              if wait "$game_pid"; then
+                  status=0
+              else
+                  status=$?
+              fi
+
+              exit "$status"
+        ' _ \
+        "$GUIDE_HELPER" \
         "$VICE" \
         "${VICE_ARGS[@]}" &
 
