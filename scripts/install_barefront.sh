@@ -885,6 +885,8 @@ heading "STAGE 3B / MEGA DRIVE / MEDNAFEN"
 MEDNAFEN_MD_EXE="/usr/games/mednafen"
 MEDNAFEN_MD_LOCAL_DIR="$BAREFRONT_DIR/emulators/mednafen"
 MEDNAFEN_MD_LAUNCHER="$BAREFRONT_DIR/scripts/launch_mednafen_md.sh"
+MEDNAFEN_MD_CONTROL_SOURCE="$BAREFRONT_DIR/src/megadrive_controller_helper.cpp"
+MEDNAFEN_MD_CONTROL_HELPER="$MEDNAFEN_MD_LOCAL_DIR/megadrive_controller_helper"
 MEDNAFEN_MD_PROFILE="$BAREFRONT_DIR/saves/megadrive/mednafen"
 MEDNAFEN_MD_CONFIG="$MEDNAFEN_MD_PROFILE/mednafen.cfg"
 
@@ -1061,6 +1063,72 @@ echo "  Raw H32:  256x224 within the 320x224 presentation surface"
 echo "  Gamescope output: 1280x896"
 echo "  Audio: BareFront-selected HDMI -> direct ALSA / 48 kHz / 20 ms"
 echo "  Esc: direct return to BareFront"
+
+# ------------------------------------------------------------
+# Mega Drive Xbox Guide hold helper
+# ------------------------------------------------------------
+
+echo
+echo "Installing/verifying Mega Drive controller helper..."
+
+if [[ ! -f "$MEDNAFEN_MD_CONTROL_SOURCE" ]]; then
+    die "Mega Drive controller helper source is missing."
+fi
+
+if ! command -v g++ >/dev/null 2>&1 ||
+   ! command -v pkg-config >/dev/null 2>&1 ||
+   ! pkg-config --exists sdl2 x11 xtst
+then
+    echo
+    echo "Installing Mega Drive controller helper build dependencies..."
+
+    if ! sudo apt-get install -y \
+        g++ \
+        pkg-config \
+        libsdl2-dev \
+        libx11-dev \
+        libxtst-dev
+    then
+        die "Could not install Mega Drive controller helper build dependencies."
+    fi
+fi
+
+if [[ ! -x "$MEDNAFEN_MD_CONTROL_HELPER" ]] ||
+   [[ "$MEDNAFEN_MD_CONTROL_SOURCE" -nt "$MEDNAFEN_MD_CONTROL_HELPER" ]]
+then
+    echo
+    echo "Building Mega Drive controller helper..."
+
+    MEDNAFEN_MD_CONTROL_CANDIDATE="$(
+        mktemp "$MEDNAFEN_MD_LOCAL_DIR/.megadrive-controller-build.XXXXXX"
+    )"
+
+    if ! g++ -std=c++17 -O2 -Wall -Wextra \
+        "$MEDNAFEN_MD_CONTROL_SOURCE" \
+        -o "$MEDNAFEN_MD_CONTROL_CANDIDATE" \
+        $(pkg-config --cflags --libs sdl2 x11 xtst)
+    then
+        rm -f -- "$MEDNAFEN_MD_CONTROL_CANDIDATE"
+        die "Mega Drive controller helper compilation failed."
+    fi
+
+    chmod 755 "$MEDNAFEN_MD_CONTROL_CANDIDATE"
+
+    mv -fT \
+        "$MEDNAFEN_MD_CONTROL_CANDIDATE" \
+        "$MEDNAFEN_MD_CONTROL_HELPER"
+
+    echo "Action: BUILD"
+else
+    echo "Mega Drive controller helper is already current."
+    echo "Action: SKIP"
+fi
+
+if [[ ! -x "$MEDNAFEN_MD_CONTROL_HELPER" ]]; then
+    die "Mega Drive controller helper verification failed."
+fi
+
+echo "  Mega Drive controller helper: OK"
 echo
 echo "Mega Drive stage complete."
 

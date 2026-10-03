@@ -6,8 +6,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROM="${1:-}"
 
 MEDNAFEN="/usr/games/mednafen"
-GAMESCOPE="/usr/games/gamescope"
+source "$ROOT/scripts/barefront_presentation_runtime.sh"
+barefront_resolve_presentation_runtime "$ROOT"
+GAMESCOPE="$BAREFRONT_GAMESCOPE"
+export VK_IMPLICIT_LAYER_PATH="$BAREFRONT_VKBASALT_LAYER_DIR"
 PROFILE="$ROOT/saves/megadrive/mednafen"
+CONTROL_HELPER="$ROOT/emulators/mednafen/megadrive_controller_helper"
 
 NATIVE_WIDTH=320
 NATIVE_HEIGHT=224
@@ -33,6 +37,11 @@ fi
 
 if [[ ! -x "$GAMESCOPE" ]]; then
     echo "Gamescope executable not found: $GAMESCOPE" >&2
+    exit 1
+fi
+
+if [[ ! -x "$CONTROL_HELPER" ]]; then
+    echo "Mega Drive controller helper not found: $CONTROL_HELPER" >&2
     exit 1
 fi
 
@@ -85,7 +94,28 @@ echo "  Output:      ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}"
 echo "  Filter:      nearest"
 barefront_audio_log
 
-exec pasuspender -- \
+SESSION_DIR="$(mktemp -d /tmp/barefront-megadrive.XXXXXX)"
+GAME_LOG="$SESSION_DIR/gamescope.log"
+CONTROL_LOG="$SESSION_DIR/controller.log"
+
+CONTROL_HELPER_PID=""
+
+cleanup()
+{
+    if [[ -n "$CONTROL_HELPER_PID" ]]; then
+        if kill -0 "$CONTROL_HELPER_PID" 2>/dev/null; then
+            kill "$CONTROL_HELPER_PID" 2>/dev/null || true
+        fi
+
+        wait "$CONTROL_HELPER_PID" 2>/dev/null || true
+    fi
+}
+
+trap cleanup EXIT
+
+echo "  Session logs: $SESSION_DIR"
+
+pasuspender -- \
     env \
         ENABLE_VKBASALT=1 \
         VKBASALT_CONFIG_FILE="$VKBASALT_CONFIG" \
@@ -115,4 +145,27 @@ exec pasuspender -- \
                     -md.yscale 1 \
                     -video.fs 0 \
                     -command.exit "keyboard 0x0 41" \
-                    "$ROM"
+                    "$ROM" > "$GAME_LOG" 2>&1 &
+
+GAME_PID=$!
+
+BAREFRONT_MEGADRIVE_CONTROL_SESSION=1 \
+    "$CONTROL_HELPER" > "$CONTROL_LOG" 2>&1 &
+
+CONTROL_HELPER_PID=$!
+
+STATUS=0
+wait "$GAME_PID" || STATUS=$?
+
+cleanup
+CONTROL_HELPER_PID=""
+
+echo
+echo "=== MEGA DRIVE CONTROLLER RESULT ==="
+cat "$CONTROL_LOG" 2>/dev/null || true
+
+echo
+echo "=== MEGA DRIVE GAME EXIT STATUS ==="
+echo "$STATUS"
+
+exit "$STATUS"
