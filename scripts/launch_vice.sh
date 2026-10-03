@@ -377,7 +377,6 @@ reshadeIncludePath = $ROOT/assets/shaders/barecrt
 reshadeTexturePath = $C64_TEXTURE_DIR
 
 enableOnLaunch = True
-toggleKey = F8
 BareFrontScale = 3.0
 BareFrontPhaseY = 1.0
 EOF2

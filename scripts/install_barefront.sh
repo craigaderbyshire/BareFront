@@ -382,7 +382,7 @@ echo
 
 heading "STAGE 2A / PATCHED PRESENTATION RUNTIME"
 
-PRESENTATION_RELEASE_SHA256="5ab12fba00bb359f998a71a79cf2c34c8d0f0e39a6863ca8db6133bb22c8adb2"
+PRESENTATION_RELEASE_SHA256="9aabed1d4813c943edd94c17dd962d2af90ce6bde421687de1929cf00c69ee48"
 PRESENTATION_INSTALLER="$BAREFRONT_DIR/scripts/install_presentation_runtime.sh"
 
 PRESENTATION_DOWNLOAD_DIR=""
@@ -394,24 +394,24 @@ presentation_cleanup_download()
     [[ -n "$PRESENTATION_DOWNLOAD_DIR" ]] || return 0
 
     rm -f -- \
-        "$PRESENTATION_DOWNLOAD_DIR/barefront-presentation-debian13-amd64-v1.tar.xz.part" \
-        "$PRESENTATION_DOWNLOAD_DIR/barefront-presentation-debian13-amd64-v1.tar.xz"
+        "$PRESENTATION_DOWNLOAD_DIR/barefront-presentation-debian13-amd64-v2.tar.xz.part" \
+        "$PRESENTATION_DOWNLOAD_DIR/barefront-presentation-debian13-amd64-v2.tar.xz"
 
     rmdir -- "$PRESENTATION_DOWNLOAD_DIR"
     PRESENTATION_DOWNLOAD_DIR=""
 }
 
 if [[ -z "$PRESENTATION_RELEASE_ARCHIVE" ]]; then
-    PRESENTATION_RELEASE_URL="https://github.com/craigaderbyshire/BareFront-Presentation-Runtime/releases/download/v1/barefront-presentation-debian13-amd64-v1.tar.xz"
+    PRESENTATION_RELEASE_URL="https://github.com/craigaderbyshire/BareFront-Presentation-Runtime/releases/download/v2/barefront-presentation-debian13-amd64-v2.tar.xz"
 
     command -v curl >/dev/null 2>&1 ||
         die "curl is required to download the presentation runtime."
 
     PRESENTATION_DOWNLOAD_DIR="$(
-        mktemp -d "${TMPDIR:-/tmp}/barefront-presentation-v1.XXXXXX"
+        mktemp -d "${TMPDIR:-/tmp}/barefront-presentation-v2.XXXXXX"
     )" || die "Could not create presentation download directory."
 
-    PRESENTATION_RELEASE_ARCHIVE="$PRESENTATION_DOWNLOAD_DIR/barefront-presentation-debian13-amd64-v1.tar.xz"
+    PRESENTATION_RELEASE_ARCHIVE="$PRESENTATION_DOWNLOAD_DIR/barefront-presentation-debian13-amd64-v2.tar.xz"
     PRESENTATION_PARTIAL="$PRESENTATION_RELEASE_ARCHIVE.part"
 
     echo "Downloading BareFront's pinned presentation runtime..."
@@ -6781,7 +6781,6 @@ reshadeIncludePath = $ROOT/assets/shaders/barecrt
 reshadeTexturePath = $C64_TEXTURE_DIR
 
 enableOnLaunch = True
-toggleKey = F8
 BareFrontScale = 3.0
 BareFrontPhaseY = 1.0
 EOF2

@@ -131,7 +131,6 @@ $EFFECT = $SHADER_FILE
 reshadeIncludePath = $INCLUDE_DIR
 reshadeTexturePath = $INCLUDE_DIR
 enableOnLaunch = True
-toggleKey = F8
 $SETTINGS
 EOF2
 

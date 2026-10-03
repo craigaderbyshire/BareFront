@@ -45,7 +45,7 @@ echo "PASS: Archive SHA-256 verified."
 
 mkdir -p "$ROOT/runtime"
 
-STAGE="$(mktemp -d "$ROOT/runtime/.presentation-v1.XXXXXX")"
+STAGE="$(mktemp -d "$ROOT/runtime/.presentation-v2.XXXXXX")"
 trap 'rm -rf -- "$STAGE"' EXIT
 
 tar -xJf "$ARCHIVE" -C "$STAGE" \
@@ -58,7 +58,8 @@ VK="$STAGE/runtime/vkbasalt/libvkbasalt.so"
     die "Release archive is incomplete."
 
 GS_SHA="a0951ce8f20d0f9fc893b64c3e9d1a82e8b16b0bf61bb915c39a3901970b1346"
-VK_SHA="246ad9a372cca8d0387235e36437e87e55fba0594283fd1bc6906a10cc25c331"
+VK_SHA="6e4ef4faba44b7cd7625fac47b5960406a1a02539b72fd6aab2b308aa75d3dfd"
+V1_VK_SHA="246ad9a372cca8d0387235e36437e87e55fba0594283fd1bc6906a10cc25c331"
 
 [[ "$(sha256sum "$GS" | cut -d' ' -f1)" == "$GS_SHA" ]] ||
     die "Unexpected Gamescope binary."
@@ -112,19 +113,37 @@ fi
 if [[ -e "$DEST" ]]; then
     echo "=== VERIFY EXISTING INSTALLATION ==="
 
-    cmp "$NEW/gamescope/gamescope" \
-        "$DEST/gamescope/gamescope" ||
-        die "Existing Gamescope differs; refusing to overwrite."
+    if cmp -s "$NEW/gamescope/gamescope" \
+            "$DEST/gamescope/gamescope" &&
+       cmp -s "$NEW/vkbasalt/libvkbasalt.so" \
+            "$DEST/vkbasalt/libvkbasalt.so" &&
+       cmp -s "$NEW/vulkan/implicit_layer.d/vkBasalt.json" \
+            "$DEST/vulkan/implicit_layer.d/vkBasalt.json"
+    then
+        echo "PASS: Matching runtime already installed."
 
-    cmp "$NEW/vkbasalt/libvkbasalt.so" \
-        "$DEST/vkbasalt/libvkbasalt.so" ||
-        die "Existing vkBasalt differs; refusing to overwrite."
+    elif [[ -x "$DEST/gamescope/gamescope" &&
+            -s "$DEST/vkbasalt/libvkbasalt.so" ]] &&
+         [[ "$(sha256sum "$DEST/gamescope/gamescope" | cut -d' ' -f1)" == "$GS_SHA" ]] &&
+         [[ "$(sha256sum "$DEST/vkbasalt/libvkbasalt.so" | cut -d' ' -f1)" == "$V1_VK_SHA" ]]
+    then
+        echo "=== UPGRADE KNOWN V1 RUNTIME TO V2 ==="
 
-    cmp "$NEW/vulkan/implicit_layer.d/vkBasalt.json" \
-        "$DEST/vulkan/implicit_layer.d/vkBasalt.json" ||
-        die "Existing Vulkan manifest differs; refusing to overwrite."
+        OLD="$STAGE/presentation-v1-backup"
 
-    echo "PASS: Matching runtime already installed."
+        mv -T "$DEST" "$OLD" ||
+            die "Could not stage the existing v1 runtime."
+
+        if mv -T "$NEW" "$DEST"; then
+            echo "PASS: Known v1 runtime upgraded to v2."
+        else
+            mv -T "$OLD" "$DEST" || true
+            die "v2 installation failed; restored v1 runtime."
+        fi
+
+    else
+        die "Existing presentation runtime is neither matching v2 nor known v1; refusing to overwrite."
+    fi
 else
     echo "=== INSTALL PRIVATE RUNTIME ==="
     mv -T "$NEW" "$DEST"

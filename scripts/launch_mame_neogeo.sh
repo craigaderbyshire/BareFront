@@ -143,7 +143,6 @@ barecrt = $BARECRT
 reshadeIncludePath = $ROOT/assets/shaders/barecrt
 reshadeTexturePath = $ROOT/assets/shaders/barecrt
 enableOnLaunch = True
-toggleKey = F8
 BareFrontScale = 4.0
 EOF2
 

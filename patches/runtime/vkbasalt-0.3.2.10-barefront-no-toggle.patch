@@ -1,0 +1,24 @@
+--- a/src/basalt.cpp
++++ b/src/basalt.cpp
+@@ -547,17 +547,4 @@
+-        static uint32_t keySymbol = convertToKeySym(pConfig->getOption<std::string>("toggleKey", "Home"));
+-
+-        static bool pressed       = false;
+-        static bool presentEffect = pConfig->getOption<bool>("enableOnLaunch", true);
+-
+-        if (isKeyPressed(keySymbol))
+-        {
+-            if (!pressed)
+-            {
+-                presentEffect = !presentEffect;
+-                pressed       = true;
+-            }
+-        }
+-        else
+-        {
+-            pressed = false;
+-        }
++        // BareFront owns shader selection before launch.
++        // Keep the configured initial state fixed for this emulator session.
++        static const bool presentEffect =
++            pConfig->getOption<bool>("enableOnLaunch", true);
