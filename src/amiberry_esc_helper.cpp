@@ -2,12 +2,16 @@
 #include <X11/XKBlib.h>
 #include <X11/keysym.h>
 #include <X11/extensions/XInput2.h>
+#include <SDL.h>
 
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <algorithm>
+#include <vector>
+#include <unordered_map>
 #include <string>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -15,6 +19,8 @@
 
 namespace
 {
+
+constexpr Uint64 GUIDE_HOLD_MS = 1500;
 
 bool requestQuit(const std::string& socketPath)
 {
@@ -139,7 +145,192 @@ int main(int argc, char* argv[])
 
     XFlush(display);
 
+    // Preserve XInput2 keyboard Esc. SDL handles Xbox Guide
+    // independently and uses the same Amiberry IPC QUIT path.
+    if (SDL_Init(SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0) {
+        std::cerr << "SDL initialization failed: "
+                  << SDL_GetError() << "\n";
+        XCloseDisplay(display);
+        return 1;
+    }
+
+    SDL_GameControllerEventState(SDL_ENABLE);
+
+    std::vector<SDL_GameController*> controllers;
+    std::unordered_map<SDL_JoystickID, Uint64> guideDownAt;
+
+    auto openController = [&](int index) {
+        if (!SDL_IsGameController(index)) {
+            return;
+        }
+
+        const SDL_JoystickID instance =
+            SDL_JoystickGetDeviceInstanceID(index);
+
+        if (instance >= 0 &&
+            SDL_GameControllerFromInstanceID(instance)) {
+            return;
+        }
+
+        SDL_GameController* controller =
+            SDL_GameControllerOpen(index);
+
+        if (controller) {
+            controllers.push_back(controller);
+
+            std::cout
+                << "Amiberry controller opened: "
+                << SDL_GameControllerName(controller)
+                << "\n";
+        }
+    };
+
+    auto closeSDL = [&]() {
+        for (SDL_GameController* controller : controllers) {
+            SDL_GameControllerClose(controller);
+        }
+
+        controllers.clear();
+        SDL_Quit();
+    };
+
+    for (int index = 0; index < SDL_NumJoysticks(); ++index) {
+        openController(index);
+    }
+
+    std::cout << "Amiberry Guide helper active. DISPLAY="
+              << (std::getenv("DISPLAY")
+                      ? std::getenv("DISPLAY")
+                      : "<unset>")
+              << "\n";
+
     while (kill(pid, 0) == 0 || errno == EPERM) {
+        SDL_Event sdlEvent;
+
+        while (SDL_PollEvent(&sdlEvent)) {
+            if (sdlEvent.type == SDL_QUIT) {
+                std::cout
+                    << "Amiberry Guide helper received SDL_QUIT\n";
+
+                closeSDL();
+                XCloseDisplay(display);
+                return 0;
+            }
+
+            if (sdlEvent.type == SDL_CONTROLLERDEVICEADDED) {
+                openController(sdlEvent.cdevice.which);
+                continue;
+            }
+
+            if (sdlEvent.type == SDL_CONTROLLERDEVICEREMOVED) {
+                guideDownAt.erase(sdlEvent.cdevice.which);
+
+                SDL_GameController* removed =
+                    SDL_GameControllerFromInstanceID(
+                        sdlEvent.cdevice.which
+                    );
+
+                if (removed) {
+                    controllers.erase(
+                        std::remove(
+                            controllers.begin(),
+                            controllers.end(),
+                            removed
+                        ),
+                        controllers.end()
+                    );
+
+                    SDL_GameControllerClose(removed);
+                }
+
+                continue;
+            }
+
+            // Physical Xbox-logo button on the M7 arrives
+            // through SDL as MISC1.
+            //
+            // BareFront owns it exclusively:
+            //   tap              -> no action
+            //   hold >= 1500 ms  -> native Amiberry IPC QUIT
+            if (sdlEvent.type == SDL_CONTROLLERBUTTONDOWN &&
+                sdlEvent.cbutton.button ==
+                    SDL_CONTROLLER_BUTTON_MISC1) {
+
+                const SDL_JoystickID instance =
+                    sdlEvent.cbutton.which;
+
+                if (guideDownAt.find(instance) ==
+                    guideDownAt.end()) {
+
+                    guideDownAt.emplace(
+                        instance,
+                        SDL_GetTicks64()
+                    );
+
+                    std::cout << "Xbox Guide down\n";
+                }
+
+                continue;
+            }
+
+            if (sdlEvent.type == SDL_CONTROLLERBUTTONUP &&
+                sdlEvent.cbutton.button ==
+                    SDL_CONTROLLER_BUTTON_MISC1) {
+
+                const SDL_JoystickID instance =
+                    sdlEvent.cbutton.which;
+
+                const auto found =
+                    guideDownAt.find(instance);
+
+                if (found != guideDownAt.end()) {
+                    const Uint64 elapsed =
+                        SDL_GetTicks64() - found->second;
+
+                    std::cout
+                        << "Xbox Guide released after "
+                        << elapsed
+                        << " ms\n";
+
+                    guideDownAt.erase(found);
+                }
+
+                continue;
+            }
+        }
+
+        bool guideHoldReached = false;
+
+        const Uint64 now =
+            SDL_GetTicks64();
+
+        for (const auto& entry : guideDownAt) {
+            if (now - entry.second >= GUIDE_HOLD_MS) {
+                guideHoldReached = true;
+                break;
+            }
+        }
+
+        if (guideHoldReached) {
+            std::cout
+                << "Xbox Guide hold detected after "
+                << GUIDE_HOLD_MS
+                << " ms\n";
+
+            // Clear first so a failed QUIT cannot repeat every
+            // loop while the physical button remains held.
+            guideDownAt.clear();
+
+            if (requestQuit(socketPath)) {
+                std::cout
+                    << "Amiberry IPC QUIT requested by Xbox Guide hold\n";
+
+                closeSDL();
+                XCloseDisplay(display);
+                return 10;
+            }
+        }
+
         while (XPending(display)) {
             XEvent event;
             XNextEvent(display, &event);
@@ -178,6 +369,7 @@ int main(int argc, char* argv[])
             XFreeEventData(display, &event.xcookie);
 
             if (quitRequested) {
+                closeSDL();
                 XCloseDisplay(display);
                 return 10;
             }
@@ -186,6 +378,7 @@ int main(int argc, char* argv[])
         usleep(10000);
     }
 
+    closeSDL();
     XCloseDisplay(display);
     return 0;
 }

@@ -3,10 +3,20 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MODE=""
+
+if [[ "${1:-}" == "--dry-run" ]]; then
+    MODE="--dry-run"
+    shift
+fi
+
 ROM="${1:-}"
 
 AMIBERRY="/usr/bin/amiberry"
-GAMESCOPE="/usr/games/gamescope"
+source "$ROOT/scripts/barefront_presentation_runtime.sh"
+barefront_resolve_presentation_runtime "$ROOT"
+GAMESCOPE="$BAREFRONT_GAMESCOPE"
+export VK_IMPLICIT_LAYER_PATH="$BAREFRONT_VKBASALT_LAYER_DIR"
 
 CONF="$ROOT/emulators/amiberry/amiberry.conf"
 PROFILE="$ROOT/saves/amiga/amiberry"
@@ -95,6 +105,93 @@ fi
 if ! command -v xrandr >/dev/null 2>&1; then
     echo "xrandr is required for Amiga presentation." >&2
     exit 1
+fi
+
+# ------------------------------------------------------------
+# Frontend-owned, per-system Amiga shader selection.
+# NONE disables vkBasalt completely.
+# ------------------------------------------------------------
+
+PREFERENCES="${BAREFRONT_SHADER_PREFS:-$ROOT/saves/presentation/shaders.ini}"
+SHADER="NONE"
+
+if [[ -f "$PREFERENCES" ]]; then
+    while IFS='=' read -r key value; do
+        if [[ "$key" == "amiga" ]]; then
+            SHADER="${value%$'\r'}"
+        fi
+    done < "$PREFERENCES"
+fi
+
+EFFECT=""
+DECLARATION=""
+INCLUDE_DIR=""
+SHADER_FILE=""
+SETTINGS=""
+
+case "$SHADER" in
+    NONE)
+        ;;
+
+    BARECRT)
+        EFFECT="barecrt"
+        SHADER_FILE="$BARECRT"
+        INCLUDE_DIR="$ROOT/assets/shaders/barecrt"
+        DECLARATION="barecrt = $SHADER_FILE"
+        SETTINGS="$(printf '%s\n' \
+            'BareFrontScale = 4.0' \
+            'BareFrontSourceScaleX = 3.0' \
+            'BareFrontSourceScaleY = 4.0')"
+        ;;
+
+    CRT-LITE)
+        EFFECT="CRT_Lite"
+        INCLUDE_DIR="$ROOT/assets/shaders/crt-lite"
+        SHADER_FILE="$INCLUDE_DIR/CRT_Lite.fx"
+        DECLARATION="CRT_Lite = $SHADER_FILE"
+        SETTINGS="SCANLINE_COUNT = 0.0"
+        ;;
+
+    CRT-LOTTES)
+        EFFECT="CRT_Lottes"
+        INCLUDE_DIR="$ROOT/assets/shaders/crt-lottes"
+        SHADER_FILE="$INCLUDE_DIR/CRT_Lottes.fx"
+        DECLARATION="CRT_Lottes = $SHADER_FILE"
+        SETTINGS="$(printf '%s\n' \
+            'fDownscale = 4.0' \
+            'fBlur = 2.6')"
+        ;;
+
+    *)
+        echo "STOP: Invalid Amiga shader preference: $SHADER" >&2
+        exit 1
+        ;;
+esac
+
+if [[ "$SHADER" != "NONE" ]]; then
+    if [[ ! -f "$SHADER_FILE" ||
+          ! -f "$INCLUDE_DIR/ReShade.fxh" ]]; then
+        echo "STOP: Selected Amiga shader dependency missing." >&2
+        exit 1
+    fi
+
+    if [[ "$SHADER" == "CRT-LOTTES" &&
+          ! -f "$INCLUDE_DIR/CRT_Lottes.fxh" ]]; then
+        echo "STOP: CRT_Lottes.fxh missing." >&2
+        exit 1
+    fi
+fi
+
+echo "Amiga shader: $SHADER"
+echo "Amiga effect: ${EFFECT:-DISABLED}"
+
+if [[ -n "$SETTINGS" ]]; then
+    printf '%s\n' "$SETTINGS"
+fi
+
+if [[ "$MODE" == "--dry-run" ]]; then
+    echo "PASS: Dry run only — no display changes or game launch."
+    exit 0
 fi
 
 # ------------------------------------------------------------
@@ -261,16 +358,28 @@ trap cleanup EXIT INT TERM
 # External BareCRT only
 # ------------------------------------------------------------
 
-cat > "$VKBASALT_CONFIG" <<EOF_VKBASALT
-effects = barecrt
-barecrt = $BARECRT
-reshadeIncludePath = $ROOT/assets/shaders/barecrt
-reshadeTexturePath = $ROOT/assets/shaders/barecrt
+LAUNCH_ENV=(
+    env
+    -u VKBASALT_CONFIG_FILE
+    ENABLE_VKBASALT=0
+)
+
+if [[ "$SHADER" != "NONE" ]]; then
+    cat > "$VKBASALT_CONFIG" <<EOF_VKBASALT
+effects = $EFFECT
+$DECLARATION
+reshadeIncludePath = $INCLUDE_DIR
+reshadeTexturePath = $INCLUDE_DIR
 enableOnLaunch = True
-BareFrontScale = 4.0
-BareFrontSourceScaleX = 3.0
-BareFrontSourceScaleY = 4.0
+$SETTINGS
 EOF_VKBASALT
+
+    LAUNCH_ENV=(
+        env
+        ENABLE_VKBASALT=1
+        VKBASALT_CONFIG_FILE="$VKBASALT_CONFIG"
+    )
+fi
 
 # ------------------------------------------------------------
 # Physical PAL presentation
@@ -312,9 +421,7 @@ rm -f "$IPC_SOCKET" "$PROBE"
 #   external BareCRT
 # ------------------------------------------------------------
 
-env \
-    ENABLE_VKBASALT=1 \
-    VKBASALT_CONFIG_FILE="$VKBASALT_CONFIG" \
+"${LAUNCH_ENV[@]}" \
     "$GAMESCOPE" \
         -b \
         -g \

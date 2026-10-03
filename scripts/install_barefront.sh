@@ -5586,29 +5586,42 @@ if [[ ! -f "$AMIBERRY_ESC_SOURCE" ]]; then
     die "Amiberry Escape helper source missing: $AMIBERRY_ESC_SOURCE"
 fi
 
+if ! command -v g++ >/dev/null 2>&1; then
+    die "g++ is required for the Amiberry Escape/Guide helper."
+fi
+
+if ! command -v pkg-config >/dev/null 2>&1 ||
+   ! pkg-config --exists sdl2 x11 xi
+then
+    die "Amiberry Escape/Guide helper build dependencies are missing."
+fi
+
 if [[ ! -x "$AMIBERRY_ESC_HELPER" ]] ||
    [[ "$AMIBERRY_ESC_SOURCE" -nt "$AMIBERRY_ESC_HELPER" ]]
 then
     echo
-    echo "Building BareFront Amiberry Escape helper..."
+    echo "Building BareFront Amiberry Escape/Guide helper..."
 
-    if ! g++ \
-        -std=c++17 \
-        -O2 \
-        -Wall \
-        -Wextra \
-        -pedantic \
+    AMIBERRY_ESC_TEMP="$(
+        mktemp "$AMIBERRY_LOCAL_DIR/.amiberry-esc-build.XXXXXX"
+    )"
+
+    if ! g++ -std=c++17 -O2 -Wall -Wextra -pedantic \
         "$AMIBERRY_ESC_SOURCE" \
-        -o "$AMIBERRY_ESC_HELPER" \
-        -lX11 \
-        -lXi
+        -o "$AMIBERRY_ESC_TEMP" \
+        $(pkg-config --cflags --libs sdl2 x11 xi)
     then
-        die "Could not build the Amiberry Escape helper."
+        rm -f -- "$AMIBERRY_ESC_TEMP"
+        die "Could not build the Amiberry Escape/Guide helper."
     fi
+
+    chmod 0755 "$AMIBERRY_ESC_TEMP"
+    mv -fT -- "$AMIBERRY_ESC_TEMP" "$AMIBERRY_ESC_HELPER"
 
     echo "  Action: BUILD"
 else
-    echo "  Escape helper is already built and current."
+    echo
+    echo "  Escape/Guide helper is already built and current."
     echo "  Action: SKIP"
 fi
 
