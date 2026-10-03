@@ -641,6 +641,61 @@ fi
 
 
 # ------------------------------------------------------------
+# Stella Guide exit helper — Xbox Guide
+# ------------------------------------------------------------
+
+STELLA_GUIDE_SOURCE="$BAREFRONT_DIR/src/stella_guide_exit_helper.cpp"
+STELLA_GUIDE_DIR="$BAREFRONT_DIR/emulators/stella"
+STELLA_GUIDE_HELPER="$STELLA_GUIDE_DIR/stella_guide_exit_helper"
+
+if [[ ! -f "$STELLA_GUIDE_SOURCE" ]]; then
+    die "Stella Guide helper source is missing: $STELLA_GUIDE_SOURCE"
+fi
+
+if ! command -v g++ >/dev/null 2>&1 ||
+   ! command -v sdl2-config >/dev/null 2>&1
+then
+    die "Stella Guide helper build dependencies are missing."
+fi
+
+mkdir -p "$STELLA_GUIDE_DIR"
+
+if [[ ! -x "$STELLA_GUIDE_HELPER" ]] ||
+   [[ "$STELLA_GUIDE_SOURCE" -nt "$STELLA_GUIDE_HELPER" ]]
+then
+    echo
+    echo "Building Stella Xbox Guide exit helper..."
+
+    STELLA_GUIDE_CANDIDATE="$(
+        mktemp "$STELLA_GUIDE_DIR/.stella-guide-build.XXXXXX"
+    )"
+
+    if ! g++ -std=c++17 -O2 \
+        "$STELLA_GUIDE_SOURCE" \
+        -o "$STELLA_GUIDE_CANDIDATE" \
+        $(sdl2-config --cflags --libs) \
+        -lX11 -lXtst
+    then
+        rm -f -- "$STELLA_GUIDE_CANDIDATE"
+        die "Stella Guide helper compilation failed."
+    fi
+
+    chmod 755 "$STELLA_GUIDE_CANDIDATE"
+    mv -fT "$STELLA_GUIDE_CANDIDATE" "$STELLA_GUIDE_HELPER"
+
+    echo "Action: BUILD"
+else
+    echo
+    echo "Stella Guide exit helper is already current."
+    echo "Action: SKIP"
+fi
+
+if [[ ! -x "$STELLA_GUIDE_HELPER" ]]; then
+    die "Stella Guide exit helper build failed."
+fi
+
+
+# ------------------------------------------------------------
 # Mednafen - Mega Drive + Saturn + PC Engine
 # One emulator package services three BareFront systems.
 # ------------------------------------------------------------
