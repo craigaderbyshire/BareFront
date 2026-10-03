@@ -4378,6 +4378,8 @@ heading "STAGE 3B / BSNES"
 BSNES_DIR="$BAREFRONT_DIR/emulators/bsnes"
 BSNES_EXE="$BSNES_DIR/bsnes"
 BSNES_LAUNCHER="$BAREFRONT_DIR/scripts/launch_bsnes.sh"
+BSNES_CONTROL_SOURCE="$BAREFRONT_DIR/src/snes_controller_helper.cpp"
+BSNES_CONTROL_HELPER="$BSNES_DIR/snes_controller_helper"
 
 # v115 is the final official stable bsnes release from Near/byuu.
 # Official stable Linux binaries are not provided in a form we
@@ -5027,6 +5029,71 @@ echo "No SNES BIOS is required for ordinary cartridge games."
 echo
 echo "BareFront launch command will later use:"
 echo "  $BSNES_LAUNCHER {rom}"
+
+# ------------------------------------------------------------
+# SNES Xbox Guide hold helper
+# ------------------------------------------------------------
+
+echo
+echo "Installing/verifying SNES controller helper..."
+
+if [[ ! -f "$BSNES_CONTROL_SOURCE" ]]; then
+    die "SNES controller helper source is missing."
+fi
+
+if ! command -v g++ >/dev/null 2>&1 ||
+   ! command -v pkg-config >/dev/null 2>&1 ||
+   ! pkg-config --exists sdl2 x11 xtst
+then
+    echo
+    echo "Installing SNES controller helper build dependencies..."
+
+    if ! sudo apt-get install -y \
+        g++ \
+        pkg-config \
+        libsdl2-dev \
+        libx11-dev \
+        libxtst-dev
+    then
+        die "Could not install SNES controller helper build dependencies."
+    fi
+fi
+
+if [[ ! -x "$BSNES_CONTROL_HELPER" ]] ||
+   [[ "$BSNES_CONTROL_SOURCE" -nt "$BSNES_CONTROL_HELPER" ]]
+then
+    echo
+    echo "Building SNES controller helper..."
+
+    BSNES_CONTROL_CANDIDATE="$(
+        mktemp "$BSNES_DIR/.snes-controller-build.XXXXXX"
+    )"
+
+    if ! g++ -std=c++17 -O2 -Wall -Wextra \
+        "$BSNES_CONTROL_SOURCE" \
+        -o "$BSNES_CONTROL_CANDIDATE" \
+        $(pkg-config --cflags --libs sdl2 x11 xtst)
+    then
+        rm -f -- "$BSNES_CONTROL_CANDIDATE"
+        die "SNES controller helper compilation failed."
+    fi
+
+    chmod 755 "$BSNES_CONTROL_CANDIDATE"
+    mv -fT \
+        "$BSNES_CONTROL_CANDIDATE" \
+        "$BSNES_CONTROL_HELPER"
+
+    echo "Action: BUILD"
+else
+    echo "SNES controller helper is already current."
+    echo "Action: SKIP"
+fi
+
+if [[ ! -x "$BSNES_CONTROL_HELPER" ]]; then
+    die "SNES controller helper verification failed."
+fi
+
+echo "  SNES controller helper: OK"
 echo
 echo "bsnes stage complete."
 
