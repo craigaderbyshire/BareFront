@@ -4430,9 +4430,9 @@ int main()
             "PLAYSTATION 2",
             "ps2",
             "assets/systems/ps2.png",
-            "testroms/ps2",
+            "roms/ps2",
             "assets/games/ps2",
-            { ".iso", ".chd", ".cso" }
+            { ".iso", ".chd", ".cso", ".m3u" }
         },
 
         {
@@ -5549,6 +5549,7 @@ int main()
                         if (systems[activeSystemIndex].configSection == "dreamcast" ||
                              systems[activeSystemIndex].configSection == "nes" ||
                              systems[activeSystemIndex].configSection == "ps1" ||
+                             systems[activeSystemIndex].configSection == "ps2" ||
                              systems[activeSystemIndex].configSection == "saturn" ||
                              systems[activeSystemIndex].configSection == "pcengine" ||
                              systems[activeSystemIndex].configSection == "arcade")
@@ -5692,11 +5693,11 @@ int main()
 
 
                         screen =
-                            ((activeSection == "dreamcast" || activeSection == "nes" || activeSection == "ps1" || activeSection == "saturn" || activeSection == "pcengine" || activeSection == "arcade"))
+                            ((activeSection == "dreamcast" || activeSection == "nes" || activeSection == "ps1" || activeSection == "ps2" || activeSection == "saturn" || activeSection == "pcengine" || activeSection == "arcade"))
                                 ? Screen::Collections
                                 : Screen::Games;
 
-                        if ((activeSection == "dreamcast" || activeSection == "nes" || activeSection == "ps1" || activeSection == "saturn" || activeSection == "pcengine" || activeSection == "arcade"))
+                        if ((activeSection == "dreamcast" || activeSection == "nes" || activeSection == "ps1" || activeSection == "ps2" || activeSection == "saturn" || activeSection == "pcengine" || activeSection == "arcade"))
                         {
                             // The Collections screen needs no game preview.
                             videoPlayer.stop();
@@ -6178,6 +6179,7 @@ switch (action)
 
                             if (
                                 (systems[activeSystemIndex].configSection == "ps1" ||
+                                 systems[activeSystemIndex].configSection == "ps2" ||
                                  systems[activeSystemIndex].configSection == "dreamcast") &&
                                 bfmultidisc::isPlaylist(
                                     games[gameSelected]

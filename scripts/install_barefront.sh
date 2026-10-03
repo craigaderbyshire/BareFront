@@ -2220,7 +2220,7 @@ heading "STAGE 3B / PCSX2"
 PCSX2_DIR="$BAREFRONT_DIR/emulators/pcsx2"
 PCSX2_EXE="$PCSX2_DIR/PCSX2.AppImage"
 PCSX2_LAUNCHER="$PCSX2_DIR/launch_pcsx2.sh"
-PCSX2_GAMESCOPE="/usr/games/gamescope"
+PCSX2_GAMESCOPE="$BAREFRONT_DIR/runtime/presentation/gamescope/gamescope"
 PCSX2_BARECRT="$BAREFRONT_DIR/assets/shaders/barecrt/BareCRT_v2.fx"
 PCSX2_OVERLAY="$BAREFRONT_DIR/assets/overlays/ps2.png"
 
@@ -2244,6 +2244,49 @@ echo "  $PCSX2_DIR"
 echo
 
 mkdir -p "$PCSX2_DIR"
+
+# ------------------------------------------------------------
+# PCSX2 Xbox Guide exit helper
+# ------------------------------------------------------------
+
+PCSX2_GUIDE_SOURCE="$BAREFRONT_DIR/src/pcsx2_guide_exit_helper.cpp"
+PCSX2_GUIDE_HELPER="$PCSX2_DIR/pcsx2_guide_exit_helper"
+
+if [[ ! -f "$PCSX2_GUIDE_SOURCE" ]]; then
+    die "PCSX2 Guide helper source is missing."
+fi
+
+if ! command -v g++ >/dev/null 2>&1 ||
+   ! command -v pkg-config >/dev/null 2>&1 ||
+   ! pkg-config --exists sdl2 x11 xtst
+then
+    die "PCSX2 Guide helper build dependencies are missing."
+fi
+
+if [[ ! -x "$PCSX2_GUIDE_HELPER" ]] ||
+   [[ "$PCSX2_GUIDE_SOURCE" -nt "$PCSX2_GUIDE_HELPER" ]]
+then
+    echo
+    echo "Building PCSX2 Xbox Guide helper..."
+
+    PCSX2_GUIDE_TEMP="$(mktemp "$PCSX2_DIR/.pcsx2-guide.XXXXXX")"
+
+    if ! g++ -std=c++17 -O2 -Wall -Wextra \
+        "$PCSX2_GUIDE_SOURCE" \
+        -o "$PCSX2_GUIDE_TEMP" \
+        $(pkg-config --cflags --libs sdl2 x11 xtst)
+    then
+        rm -f -- "$PCSX2_GUIDE_TEMP"
+        die "PCSX2 Guide helper compilation failed."
+    fi
+
+    chmod 0755 "$PCSX2_GUIDE_TEMP"
+    mv -f -- "$PCSX2_GUIDE_TEMP" "$PCSX2_GUIDE_HELPER"
+
+    echo "PCSX2 Xbox Guide helper built."
+else
+    echo "PCSX2 Xbox Guide helper already built."
+fi
 
 NEED_PCSX2_INSTALL=1
 
@@ -2673,6 +2716,121 @@ set_value("EmuCore/GS", "deinterlace_mode", "0")
 set_value("EmuCore/GS", "upscale_multiplier", "1")
 set_value("EmuCore/GS", "TVShader", "0")
 
+# BAREFRONT_PCSX2_PAD1_MIGRATION
+#
+# PCSX2's fresh portable profile currently creates Pad1 with keyboard
+# bindings only. BareFront is controller-first, so migrate that exact
+# stock keyboard mapping to the Xbox/SDL layout.
+#
+# A profile which differs from the stock keyboard mapping is treated as
+# user-managed and is deliberately left untouched.
+keyboard_pad1 = {
+    "Up": "Keyboard/Up",
+    "Right": "Keyboard/Right",
+    "Down": "Keyboard/Down",
+    "Left": "Keyboard/Left",
+    "Triangle": "Keyboard/I",
+    "Circle": "Keyboard/L",
+    "Cross": "Keyboard/K",
+    "Square": "Keyboard/J",
+    "Select": "Keyboard/Backspace",
+    "Start": "Keyboard/Return",
+    "L1": "Keyboard/Q",
+    "L2": "Keyboard/1",
+    "R1": "Keyboard/E",
+    "R2": "Keyboard/3",
+    "L3": "Keyboard/2",
+    "R3": "Keyboard/4",
+    "LUp": "Keyboard/W",
+    "LRight": "Keyboard/D",
+    "LDown": "Keyboard/S",
+    "LLeft": "Keyboard/A",
+    "RUp": "Keyboard/T",
+    "RRight": "Keyboard/H",
+    "RDown": "Keyboard/G",
+    "RLeft": "Keyboard/F",
+}
+
+xbox_pad1 = {
+    "Up": "SDL-0/DPadUp",
+    "Right": "SDL-0/DPadRight",
+    "Down": "SDL-0/DPadDown",
+    "Left": "SDL-0/DPadLeft",
+    "Triangle": "SDL-0/FaceNorth",
+    "Circle": "SDL-0/FaceEast",
+    "Cross": "SDL-0/FaceSouth",
+    "Square": "SDL-0/FaceWest",
+    "Select": "SDL-0/Back",
+    "Start": "SDL-0/Start",
+    "L1": "SDL-0/LeftShoulder",
+    "L2": "SDL-0/+LeftTrigger",
+    "R1": "SDL-0/RightShoulder",
+    "R2": "SDL-0/+RightTrigger",
+    "L3": "SDL-0/LeftStick",
+    "R3": "SDL-0/RightStick",
+    "LUp": "SDL-0/-LeftY",
+    "LRight": "SDL-0/+LeftX",
+    "LDown": "SDL-0/+LeftY",
+    "LLeft": "SDL-0/-LeftX",
+    "RUp": "SDL-0/-RightY",
+    "RRight": "SDL-0/+RightX",
+    "RDown": "SDL-0/+RightY",
+    "RLeft": "SDL-0/-RightX",
+}
+
+try:
+    pad_start = lines.index("[Pad1]")
+except ValueError:
+    pad_start = None
+
+if pad_start is not None:
+    pad_end = len(lines)
+
+    for i in range(pad_start + 1, len(lines)):
+        if lines[i].startswith("[") and lines[i].endswith("]"):
+            pad_end = i
+            break
+
+    values = {}
+    positions = {}
+
+    for i in range(pad_start + 1, pad_end):
+        if "=" not in lines[i]:
+            continue
+
+        key, value = lines[i].split("=", 1)
+        key = key.strip()
+        value = value.strip()
+
+        values[key] = value
+        positions[key] = i
+
+    expected_stock_pad1 = {
+        "Type": "DualShock2",
+        "InvertL": "0",
+        "InvertR": "0",
+        "Deadzone": "0",
+        "AxisScale": "1.33",
+        "LargeMotorScale": "1",
+        "SmallMotorScale": "1",
+        "ButtonDeadzone": "0",
+        "PressureModifier": "0.5",
+        **keyboard_pad1,
+    }
+
+    stock_keyboard = values == expected_stock_pad1
+
+    if stock_keyboard:
+        for key, value in xbox_pad1.items():
+            lines[positions[key]] = f"{key} = {value}"
+
+        lines.insert(pad_end, "LargeMotor = SDL-0/LargeMotor")
+        lines.insert(pad_end + 1, "SmallMotor = SDL-0/SmallMotor")
+
+        print("  PCSX2 Pad1: stock keyboard mapping -> Xbox SDL mapping")
+    else:
+        print("  PCSX2 Pad1: existing user mapping preserved")
+
 path.write_text("\n".join(lines) + "\n")
 PYCONFIG_OWNED
 
@@ -2703,12 +2861,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BAREFRONT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 PCSX2_EXE="$SCRIPT_DIR/PCSX2.AppImage"
+GUIDE_EXIT_HELPER="$SCRIPT_DIR/pcsx2_guide_exit_helper"
 PCSX2_DATA_DIR="$SCRIPT_DIR/PCSX2"
 PCSX2_INI="$PCSX2_DATA_DIR/inis/PCSX2.ini"
 BIOS_DIR="$PCSX2_DATA_DIR/bios"
 
-GAMESCOPE="/usr/games/gamescope"
-BARECRT="$BAREFRONT_DIR/assets/shaders/barecrt/BareCRT_v2.fx"
+source "$BAREFRONT_DIR/scripts/barefront_presentation_runtime.sh"
+barefront_resolve_presentation_runtime "$BAREFRONT_DIR"
+
+GAMESCOPE="$BAREFRONT_GAMESCOPE"
+export VK_IMPLICIT_LAYER_PATH="$BAREFRONT_VKBASALT_LAYER_DIR"
 
 NATIVE_WIDTH=640
 NATIVE_HEIGHT=480
@@ -2719,7 +2881,13 @@ OUTPUT_HEIGHT=$((NATIVE_HEIGHT * INTEGER_SCALE))
 
 VKBASALT_CONFIG="/tmp/barefront-vkbasalt-ps2.conf"
 
-ROM="${1:-}"
+if [[ "${1:-}" == "--dry-run" ]]; then
+    MODE="--dry-run"
+    ROM="${2:-}"
+else
+    MODE="launch"
+    ROM="${1:-}"
+fi
 
 if [[ -z "$ROM" ]]; then
     echo "ERROR: No PS2 game supplied." >&2
@@ -2738,15 +2906,14 @@ if [[ ! -x "$PCSX2_EXE" ]]; then
     exit 1
 fi
 
-if [[ ! -x "$GAMESCOPE" ]]; then
-    echo "ERROR: Gamescope executable not found:" >&2
-    echo "  $GAMESCOPE" >&2
+if [[ ! -x "$GUIDE_EXIT_HELPER" ]]; then
+    echo "ERROR: PCSX2 Guide helper missing: $GUIDE_EXIT_HELPER" >&2
     exit 1
 fi
 
-if [[ ! -f "$BARECRT" ]]; then
-    echo "ERROR: BareCRT shader not found:" >&2
-    echo "  $BARECRT" >&2
+if [[ ! -x "$GAMESCOPE" ]]; then
+    echo "ERROR: Gamescope executable not found:" >&2
+    echo "  $GAMESCOPE" >&2
     exit 1
 fi
 
@@ -2756,6 +2923,76 @@ if [[ ! -f "$PCSX2_INI" ]]; then
     exit 1
 fi
 
+
+PREFERENCES="${BAREFRONT_SHADER_PREFS:-$BAREFRONT_DIR/saves/presentation/shaders.ini}"
+
+SHADER="NONE"
+
+if [[ -f "$PREFERENCES" ]]; then
+    while IFS='=' read -r section value; do
+        if [[ "$section" == "ps2" ]]; then
+            SHADER="${value%$'\r'}"
+        fi
+    done < "$PREFERENCES"
+fi
+
+EFFECT=""
+SHADER_FILE=""
+INCLUDE_DIR=""
+SETTINGS=""
+
+case "$SHADER" in
+    NONE)
+        ;;
+
+    BARECRT)
+        EFFECT="barecrt"
+        INCLUDE_DIR="$BAREFRONT_DIR/assets/shaders/barecrt"
+        SHADER_FILE="$INCLUDE_DIR/BareCRT_v2.fx"
+        SETTINGS="BareFrontScale = 2.0"
+        ;;
+
+    CRT-LITE)
+        EFFECT="CRT_Lite"
+        INCLUDE_DIR="$BAREFRONT_DIR/assets/shaders/crt-lite"
+        SHADER_FILE="$INCLUDE_DIR/CRT_Lite.fx"
+        SETTINGS="SCANLINE_COUNT = 0.0"
+        ;;
+
+    CRT-LOTTES)
+        EFFECT="CRT_Lottes"
+        INCLUDE_DIR="$BAREFRONT_DIR/assets/shaders/crt-lottes"
+        SHADER_FILE="$INCLUDE_DIR/CRT_Lottes.fx"
+        SETTINGS="$(printf 'fDownscale = 2.0\nfBlur = 2.6')"
+        ;;
+
+    *)
+        echo "STOP: Invalid PS2 shader preference: $SHADER" >&2
+        exit 1
+        ;;
+esac
+
+if [[ "$SHADER" != "NONE" ]]; then
+    for required in "$SHADER_FILE" "$INCLUDE_DIR/ReShade.fxh"; do
+        if [[ ! -f "$required" ]]; then
+            echo "STOP: Missing shader dependency: $required" >&2
+            exit 1
+        fi
+    done
+
+    if [[ "$SHADER" == "CRT-LOTTES" &&
+          ! -f "$INCLUDE_DIR/CRT_Lottes.fxh" ]]; then
+        echo "STOP: CRT_Lottes.fxh is missing." >&2
+        exit 1
+    fi
+fi
+
+echo "Shader: $SHADER"
+
+if [[ "$MODE" == "--dry-run" ]]; then
+    echo "PASS: Dry run only — BIOS selection not executed."
+    exit 0
+fi
 
 python3 - "$ROM" "$BIOS_DIR" "$PCSX2_INI" <<'PY'
 from pathlib import Path
@@ -2940,26 +3177,33 @@ if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
     export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 fi
 
-cat > "$VKBASALT_CONFIG" <<EOF
-effects = barecrt
-barecrt = $BARECRT
-reshadeIncludePath = $BAREFRONT_DIR/assets/shaders/barecrt
-reshadeTexturePath = $BAREFRONT_DIR/assets/shaders/barecrt
+if [[ "$SHADER" == "NONE" ]]; then
+    LAUNCH_ENV=(env -u VKBASALT_CONFIG_FILE ENABLE_VKBASALT=0)
+else
+    cat > "$VKBASALT_CONFIG" <<EOF
+effects = $EFFECT
+$EFFECT = $SHADER_FILE
+reshadeIncludePath = $INCLUDE_DIR
+reshadeTexturePath = $INCLUDE_DIR
 enableOnLaunch = True
-toggleKey = F8
-BareFrontScale = 2.0
+$SETTINGS
 EOF
+
+    LAUNCH_ENV=(
+        env
+        ENABLE_VKBASALT=1
+        VKBASALT_CONFIG_FILE="$VKBASALT_CONFIG"
+    )
+fi
 
 echo "Starting PlayStation 2 through per-game Gamescope..."
 echo "  Canvas:      ${NATIVE_WIDTH}x${NATIVE_HEIGHT}"
 echo "  Integer:     ${INTEGER_SCALE}x"
 echo "  Output:      ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}"
 echo "  Filter:      nearest"
-echo "  BareCRT:     enabled"
+echo "  Shader:      $SHADER"
 
-exec env \
-    ENABLE_VKBASALT=1 \
-    VKBASALT_CONFIG_FILE="$VKBASALT_CONFIG" \
+exec "${LAUNCH_ENV[@]}" \
     "$GAMESCOPE" \
         -b \
         -g \
@@ -2970,9 +3214,36 @@ exec env \
         -S integer \
         -F nearest \
         -- \
+        /bin/bash -c '
+            guide="$1"
+            shift
+
+            BAREFRONT_PS2_GUIDE_SESSION=1 "$guide" &
+            guide_pid=$!
+
+            "$@" &
+            game_pid=$!
+
+            cleanup() {
+                kill -TERM "$guide_pid" 2>/dev/null || true
+                wait "$guide_pid" 2>/dev/null || true
+            }
+
+            trap cleanup EXIT
+
+            if wait "$game_pid"; then
+                status=0
+            else
+                status=$?
+            fi
+
+            exit "$status"
+        ' _ \
+        "$GUIDE_EXIT_HELPER" \
         "$PCSX2_EXE" \
             -portable \
             -batch \
+            -bigpicture \
             -slowboot \
             -fullscreen \
             "$ROM"
