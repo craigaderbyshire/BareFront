@@ -4390,7 +4390,7 @@ int main()
             "MEGA DRIVE",
             "megadrive",
             "assets/systems/megadrive.png",
-            "testroms/megadrive",
+            "roms/megadrive",
             "assets/games/megadrive",
             { ".md", ".bin", ".gen", ".zip", ".7z" }
         },
@@ -4400,7 +4400,7 @@ int main()
             "NES",
             "nes",
             "assets/systems/nes.png",
-            "testroms/nes",
+            "roms/nes",
             "assets/games/nes",
             { ".nes", ".zip", ".7z" }
         },
@@ -4410,7 +4410,7 @@ int main()
             "SUPER NES",
             "snes",
             "assets/systems/snes.png",
-            "testroms/snes",
+            "roms/snes",
             "assets/games/snes",
             { ".sfc", ".smc", ".zip", ".7z" }
         },
@@ -4440,7 +4440,7 @@ int main()
             "MASTER SYSTEM",
             "mastersystem",
             "assets/systems/mastersystem.png",
-            "testroms/mastersystem",
+            "roms/mastersystem",
             "assets/games/mastersystem",
             { ".sms", ".bin", ".zip", ".7z" }
         },
@@ -4450,7 +4450,7 @@ int main()
             "ATARI 2600",
             "atari2600",
             "assets/systems/atari2600.png",
-            "testroms/atari2600",
+            "roms/atari2600",
             "assets/games/atari2600",
             { ".a26", ".bin", ".zip", ".7z" }
         },
@@ -4460,7 +4460,7 @@ int main()
             "COMMODORE 64",
             "c64",
             "assets/systems/c64.png",
-            "testroms/c64",
+            "roms/c64",
             "assets/games/c64",
             { ".d64", ".t64", ".prg", ".crt", ".vfl", ".zip" }
         },
@@ -4483,7 +4483,7 @@ int main()
             "NEO GEO",
             "neogeo",
             "assets/systems/neogeo.png",
-            "testroms/neogeo",
+            "roms/neogeo",
             "assets/games/neogeo",
             { ".zip", ".7z" }
         },
@@ -4493,7 +4493,7 @@ int main()
             "DREAMCAST",
             "dreamcast",
             "assets/systems/dreamcast.png",
-            "testroms/dreamcast",
+            "roms/dreamcast",
             "assets/games/dreamcast",
             { ".cdi", ".gdi", ".chd", ".m3u" }
         },
@@ -4503,7 +4503,7 @@ int main()
             "SATURN",
             "saturn",
             "assets/systems/saturn.png",
-            "testroms/saturn",
+            "roms/saturn",
             "assets/games/saturn",
             { ".cue", ".ccd", ".toc", ".m3u", ".zip" }
         },
@@ -4513,7 +4513,7 @@ int main()
             "PC ENGINE",
             "pcengine",
             "assets/systems/pcengine.png",
-            "testroms/pcengine",
+            "roms/pcengine",
             "assets/games/pcengine",
             { ".pce", ".sgx", ".cue", ".ccd", ".toc", ".m3u", ".zip" }
         },
@@ -4523,7 +4523,7 @@ int main()
             "ATARI JAGUAR",
             "jaguar",
             "assets/systems/jaguar.png",
-            "testroms/jaguar",
+            "roms/jaguar",
             "assets/games/jaguar",
             { ".j64", ".jag", ".rom", ".zip" }
         },
@@ -4533,7 +4533,7 @@ int main()
             "GAMECUBE",
             "gamecube",
             "assets/systems/gamecube.png",
-            "testroms/gamecube",
+            "roms/gamecube",
             "assets/games/gamecube",
             { ".iso", ".gcm", ".rvz", ".gcz" }
         },
@@ -4543,7 +4543,7 @@ int main()
             "AMIGA",
             "amiga",
             "assets/systems/amiga.png",
-            "testroms/amiga",
+            "roms/amiga",
             "assets/games/amiga",
             { ".adf", ".adz", ".lha", ".hdf", ".ipf", ".zip" }
         }
