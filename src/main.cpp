@@ -5546,13 +5546,8 @@ int main()
                         curatedCollectionSelected = 0;
                         curatedFavouritesPath.clear();
 
-                        if (systems[activeSystemIndex].configSection == "dreamcast" ||
-                             systems[activeSystemIndex].configSection == "nes" ||
-                             systems[activeSystemIndex].configSection == "ps1" ||
-                             systems[activeSystemIndex].configSection == "ps2" ||
-                             systems[activeSystemIndex].configSection == "saturn" ||
-                             systems[activeSystemIndex].configSection == "pcengine" ||
-                             systems[activeSystemIndex].configSection == "arcade")
+                        // Every BareFront system uses the curated
+                        // Collections/Favourites library model.
                         {
                             curatedCollectionNames =
                                 bflibrary::collectionNames(systems[activeSystemIndex].configSection);
@@ -5693,12 +5688,11 @@ int main()
 
 
                         screen =
-                            ((activeSection == "dreamcast" || activeSection == "nes" || activeSection == "ps1" || activeSection == "ps2" || activeSection == "saturn" || activeSection == "pcengine" || activeSection == "arcade"))
-                                ? Screen::Collections
-                                : Screen::Games;
+                            Screen::Collections;
 
-                        if ((activeSection == "dreamcast" || activeSection == "nes" || activeSection == "ps1" || activeSection == "ps2" || activeSection == "saturn" || activeSection == "pcengine" || activeSection == "arcade"))
                         {
+                            // Collections is the normal library screen
+                            // for every BareFront system.
                             // The Collections screen needs no game preview.
                             videoPlayer.stop();
 
