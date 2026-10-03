@@ -3490,7 +3490,7 @@ FLYCAST_DIR="$BAREFRONT_DIR/emulators/flycast"
 FLYCAST_EXE="$FLYCAST_DIR/Flycast.AppImage"
 FLYCAST_LAUNCHER="$FLYCAST_DIR/launch_flycast.sh"
 FLYCAST_DATA_DIR="$FLYCAST_DIR/data"
-FLYCAST_GAMESCOPE="/usr/games/gamescope"
+FLYCAST_GAMESCOPE="$BAREFRONT_GAMESCOPE"
 FLYCAST_OVERLAY="$BAREFRONT_DIR/assets/overlays/dreamcast.png"
 
 # BareFront Stage 8 known-good Flycast build.
@@ -4006,10 +4006,6 @@ fi
 # 2x integer nearest presentation; the selected shader remains external.
 if [[ ! -x "$BAREFRONT_DIR/scripts/launch_flycast.sh" ]]; then
     die "Tracked Flycast launcher is missing or not executable."
-fi
-
-if [[ ! -f "$BAREFRONT_DIR/scripts/flycast_shader_activate.py" ]]; then
-    die "Flycast shader activation helper is missing."
 fi
 
 # Compatibility adapter. The implementation is tracked under scripts/.

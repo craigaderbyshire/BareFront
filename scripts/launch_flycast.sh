@@ -10,13 +10,11 @@ barefront_resolve_presentation_runtime "$ROOT"
 GAMESCOPE="$BAREFRONT_GAMESCOPE"
 export VK_IMPLICIT_LAYER_PATH="$BAREFRONT_VKBASALT_LAYER_DIR"
 FLYCAST="$ROOT/emulators/flycast/Flycast.AppImage"
-SHADER_HELPER="$ROOT/scripts/flycast_shader_activate.py"
 CONTROL_HELPER="$ROOT/emulators/flycast/flycast_controller_helper"
 PREFERENCES="$ROOT/saves/presentation/shaders.ini"
 
 if [[ ! -f "$ROM" || ! -x "$FLYCAST" ||
-      ! -x "$GAMESCOPE" || ! -f "$SHADER_HELPER" ||
-      ! -x "$CONTROL_HELPER" ]]; then
+      ! -x "$GAMESCOPE" || ! -x "$CONTROL_HELPER" ]]; then
     echo "STOP: Dreamcast runtime dependency is missing." >&2
     exit 1
 fi
@@ -100,7 +98,7 @@ if [[ "$SHADER" == "NONE" ]]; then
     echo "vkBasalt:     disabled"
 else
     echo "Shader file:  $SHADER_FILE"
-    echo "Activation:   disabled at startup; delayed F8"
+    echo "Activation:   enabled at launch; fixed for session"
 fi
 
 if [[ "$MODE" == "--dry-run" ]]; then
@@ -115,7 +113,6 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
 SESSION_DIR="$(mktemp -d /tmp/barefront-flycast-shader.XXXXXX)"
 LOG="$SESSION_DIR/gamescope.log"
-ACTIVATION_LOG="$SESSION_DIR/activation.log"
 CONTROL_LOG="$SESSION_DIR/controller.log"
 CONFIG="$SESSION_DIR/vkbasalt.conf"
 
@@ -129,7 +126,7 @@ effects = $EFFECT
 $EFFECT = $SHADER_FILE
 reshadeIncludePath = $INCLUDE_DIR
 reshadeTexturePath = $INCLUDE_DIR
-enableOnLaunch = False
+enableOnLaunch = True
 $SETTINGS
 CONF
 
@@ -140,17 +137,9 @@ CONF
     )
 fi
 
-SHADER_HELPER_PID=""
 CONTROL_HELPER_PID=""
 
 cleanup() {
-    if [[ -n "$SHADER_HELPER_PID" ]]; then
-        if kill -0 "$SHADER_HELPER_PID" 2>/dev/null; then
-            kill "$SHADER_HELPER_PID" 2>/dev/null || true
-        fi
-        wait "$SHADER_HELPER_PID" 2>/dev/null || true
-    fi
-
     if [[ -n "$CONTROL_HELPER_PID" ]]; then
         if kill -0 "$CONTROL_HELPER_PID" 2>/dev/null; then
             kill "$CONTROL_HELPER_PID" 2>/dev/null || true
@@ -179,31 +168,15 @@ BAREFRONT_DREAMCAST_CONTROL_SESSION=1 \
     "$CONTROL_HELPER" > "$CONTROL_LOG" 2>&1 &
 CONTROL_HELPER_PID=$!
 
-if [[ "$SHADER" != "NONE" ]]; then
-    BAREFRONT_FLYCAST_LOG="$LOG" \
-        python3 "$SHADER_HELPER" > "$ACTIVATION_LOG" 2>&1 &
-    SHADER_HELPER_PID=$!
-fi
-
 STATUS=0
 wait "$GAME_PID" || STATUS=$?
 
 cleanup
-SHADER_HELPER_PID=""
 CONTROL_HELPER_PID=""
 
 echo
 echo "=== CONTROLLER RESULT ==="
 cat "$CONTROL_LOG" 2>/dev/null || true
-
-echo
-echo "=== ACTIVATION RESULT ==="
-
-if [[ "$SHADER" == "NONE" ]]; then
-    echo "Not applicable — vkBasalt disabled."
-else
-    cat "$ACTIVATION_LOG"
-fi
 
 echo
 echo "=== GAME EXIT STATUS ==="
