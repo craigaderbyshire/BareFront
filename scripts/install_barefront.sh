@@ -214,6 +214,9 @@ BASE_PACKAGES=(
     rsync
     jq
     python3
+    udisks2
+    cifs-utils
+    keyutils
     pulseaudio-utils
 )
 
@@ -524,6 +527,21 @@ mkdir -p \
     "$BAREFRONT_DIR/emulators" \
     "$BAREFRONT_DIR/logs"
 
+CONTENT_LAYOUT_HELPER="$BAREFRONT_DIR/scripts/manage_content_layout.sh"
+
+if [[ ! -x "$CONTENT_LAYOUT_HELPER" ]]; then
+    die "BareFront content-layout helper is missing or not executable: $CONTENT_LAYOUT_HELPER"
+fi
+
+echo "Creating/verifying managed Local content layout..."
+
+if ! "$CONTENT_LAYOUT_HELPER" "$BAREFRONT_DIR"; then
+    die "BareFront managed Local content layout failed."
+fi
+
+echo "Managed Local content layout: OK"
+echo
+
 for system in "${SYSTEM_KEYS[@]}"; do
     mkdir -p \
         "$BAREFRONT_DIR/roms/$system" \
@@ -541,6 +559,386 @@ echo "  assets/games/<system>/"
 echo "  assets/videos/<system>/"
 echo
 echo "Directory stage complete."
+
+
+# ============================================================
+# Stage 2C - Optional portable-content Network Share
+# ============================================================
+
+heading "STAGE 2C / OPTIONAL NETWORK CONTENT SOURCE"
+
+NETWORK_MOUNTPOINT="${BAREFRONT_NETWORK_MOUNTPOINT:-/mnt/barefront-network}"
+NETWORK_CONFIG_DIR="${BAREFRONT_NETWORK_CONFIG_DIR:-/etc/barefront}"
+NETWORK_CREDENTIALS="${BAREFRONT_NETWORK_CREDENTIALS:-$NETWORK_CONFIG_DIR/network.credentials}"
+NETWORK_FSTAB="${BAREFRONT_NETWORK_FSTAB:-/etc/fstab}"
+NETWORK_SYSTEMCTL="${BAREFRONT_NETWORK_SYSTEMCTL:-/usr/bin/systemctl}"
+
+NETWORK_FSTAB_BEGIN="# BEGIN BAREFRONT NETWORK CONTENT"
+NETWORK_FSTAB_END="# END BAREFRONT NETWORK CONTENT"
+
+NETWORK_UID="$(id -u)"
+NETWORK_GID="$(id -g)"
+NETWORK_GROUP="$(id -gn)"
+
+
+network_managed_entry_valid()
+{
+    awk \
+        -v begin="$NETWORK_FSTAB_BEGIN" \
+        -v end="$NETWORK_FSTAB_END" \
+        -v mountpoint="$NETWORK_MOUNTPOINT" \
+        -v credentials="$NETWORK_CREDENTIALS" \
+        '
+        $0 == begin {
+            inside = 1
+            next
+        }
+
+        $0 == end {
+            inside = 0
+            next
+        }
+
+        inside && NF >= 4 &&
+        $2 == mountpoint &&
+        $3 == "cifs" {
+            delete option
+
+            count = split($4, values, ",")
+
+            for (i = 1; i <= count; ++i) {
+                option[values[i]] = 1
+            }
+
+            credentials_option = "credentials=" credentials
+
+            if (option["ro"] && option["noauto"] && option["user"] && option["_netdev"] && option[credentials_option]) {
+                found = 1
+            }
+        }
+
+        END {
+            exit(found ? 0 : 1)
+        }
+        ' \
+        "$NETWORK_FSTAB"
+}
+
+
+if [[ ! -f "$NETWORK_FSTAB" ]]; then
+    die "Network configuration fstab file does not exist: $NETWORK_FSTAB"
+fi
+
+
+NETWORK_BEGIN_COUNT="$(
+    grep -Fxc "$NETWORK_FSTAB_BEGIN" "$NETWORK_FSTAB" || true
+)"
+
+NETWORK_END_COUNT="$(
+    grep -Fxc "$NETWORK_FSTAB_END" "$NETWORK_FSTAB" || true
+)"
+
+
+if [[ "$NETWORK_BEGIN_COUNT" -ne "$NETWORK_END_COUNT" ||
+      "$NETWORK_BEGIN_COUNT" -gt 1 ]]
+then
+    die "BareFront Network Share configuration markers are inconsistent."
+fi
+
+
+if [[ "$NETWORK_BEGIN_COUNT" -eq 1 ]]; then
+
+    if [[ -L "$NETWORK_CREDENTIALS" ||
+          ! -f "$NETWORK_CREDENTIALS" ]]
+    then
+        die "BareFront Network Share credentials are missing or invalid: $NETWORK_CREDENTIALS"
+    fi
+
+    if [[ "$(stat -c '%U' "$NETWORK_CREDENTIALS")" != "root" ||
+          "$(stat -c '%G' "$NETWORK_CREDENTIALS")" != "$NETWORK_GROUP" ||
+          "$(stat -c '%a' "$NETWORK_CREDENTIALS")" != "640" ]]
+    then
+        die "BareFront Network Share credentials have unexpected ownership or permissions."
+    fi
+
+    if [[ -L "$NETWORK_MOUNTPOINT" ||
+          ! -d "$NETWORK_MOUNTPOINT" ]]
+    then
+        die "BareFront Network Share mountpoint is missing or invalid: $NETWORK_MOUNTPOINT"
+    fi
+
+    if ! network_managed_entry_valid; then
+        die "Existing BareFront Network Share fstab entry is invalid."
+    fi
+
+    echo "Existing BareFront Network Share configuration found."
+    echo "Action: PRESERVE"
+
+    if ! sudo "$NETWORK_SYSTEMCTL" daemon-reload; then
+        die "systemd daemon-reload failed."
+    fi
+
+else
+
+    echo "BareFront can optionally use an SMB/CIFS share containing:"
+    echo
+    echo "  barefront/"
+    echo "    roms/"
+    echo "    bios/"
+    echo
+    echo "Local content remains the default and a Network Share is"
+    echo "NOT required."
+    echo
+
+    read -r -p \
+        "Configure a Network Share content source? [y/N] " \
+        network_reply
+
+    network_reply="${network_reply:-N}"
+
+    if [[ "$network_reply" =~ ^[Yy]$ ]]; then
+
+        if grep -v '^[[:space:]]*#' "$NETWORK_FSTAB" |
+           awk \
+               -v mountpoint="$NETWORK_MOUNTPOINT" \
+               'NF >= 2 && $2 == mountpoint { found = 1 }
+                END { exit(found ? 0 : 1) }'
+        then
+            die "An unmanaged fstab entry already uses $NETWORK_MOUNTPOINT"
+        fi
+
+        if [[ -e "$NETWORK_CREDENTIALS" ||
+              -L "$NETWORK_CREDENTIALS" ]]
+        then
+            die "Unmanaged Network Share credentials already exist: $NETWORK_CREDENTIALS"
+        fi
+
+        if [[ -e "$NETWORK_MOUNTPOINT" ||
+              -L "$NETWORK_MOUNTPOINT" ]]
+        then
+            die "Unmanaged Network Share mountpoint already exists: $NETWORK_MOUNTPOINT"
+        fi
+
+        if [[ -L "$NETWORK_CONFIG_DIR" ]]; then
+            die "Network configuration directory must not be a symlink: $NETWORK_CONFIG_DIR"
+        fi
+
+        echo
+        echo "Enter the SMB share which CONTAINS the barefront folder."
+        echo "Example:"
+        echo "  //server/share"
+        echo
+
+        read -r -p "SMB share: " NETWORK_SHARE
+
+        if [[ ! "$NETWORK_SHARE" =~ ^//[^/[:space:]]+/[^/[:space:]]+$ ]]
+        then
+            die "SMB share must use the form //server/share with no spaces."
+        fi
+
+        read -r -p "SMB username: " NETWORK_USERNAME
+
+        if [[ -z "$NETWORK_USERNAME" ]]; then
+            die "SMB username cannot be empty."
+        fi
+
+        IFS= read -r -s -p "SMB password: " NETWORK_PASSWORD
+        echo
+
+        IFS= read -r -s -p "Confirm SMB password: " NETWORK_PASSWORD_CONFIRM
+        echo
+
+        if [[ "$NETWORK_PASSWORD" != "$NETWORK_PASSWORD_CONFIRM" ]]; then
+            NETWORK_PASSWORD=""
+            NETWORK_PASSWORD_CONFIRM=""
+
+            die "SMB passwords did not match."
+        fi
+
+
+        NETWORK_CREDENTIAL_TMP="$(mktemp)"
+        NETWORK_FSTAB_ORIGINAL="$(mktemp)"
+        NETWORK_FSTAB_CANDIDATE="$(mktemp)"
+
+        NETWORK_CONFIG_DIR_CREATED=0
+        NETWORK_MOUNTPOINT_CREATED=0
+        NETWORK_CREDENTIALS_INSTALLED=0
+        NETWORK_FSTAB_INSTALLED=0
+
+
+        network_cleanup_temp()
+        {
+            rm -f \
+                "$NETWORK_CREDENTIAL_TMP" \
+                "$NETWORK_FSTAB_ORIGINAL" \
+                "$NETWORK_FSTAB_CANDIDATE"
+        }
+
+
+        network_rollback_install()
+        {
+            if [[ "$NETWORK_FSTAB_INSTALLED" -eq 1 ]]; then
+                sudo install \
+                    -o root \
+                    -g root \
+                    -m 0644 \
+                    "$NETWORK_FSTAB_ORIGINAL" \
+                    "$NETWORK_FSTAB" \
+                    >/dev/null 2>&1 ||
+                    true
+            fi
+
+            if [[ "$NETWORK_CREDENTIALS_INSTALLED" -eq 1 ]]; then
+                sudo rm -f \
+                    "$NETWORK_CREDENTIALS" \
+                    >/dev/null 2>&1 ||
+                    true
+            fi
+
+            if [[ "$NETWORK_MOUNTPOINT_CREATED" -eq 1 ]]; then
+                sudo rmdir \
+                    "$NETWORK_MOUNTPOINT" \
+                    >/dev/null 2>&1 ||
+                    true
+            fi
+
+            if [[ "$NETWORK_CONFIG_DIR_CREATED" -eq 1 ]]; then
+                sudo rmdir \
+                    "$NETWORK_CONFIG_DIR" \
+                    >/dev/null 2>&1 ||
+                    true
+            fi
+
+            if [[ "$NETWORK_FSTAB_INSTALLED" -eq 1 ]]; then
+                sudo "$NETWORK_SYSTEMCTL" daemon-reload \
+                    >/dev/null 2>&1 ||
+                    true
+            fi
+
+            network_cleanup_temp
+        }
+
+
+        chmod 600 \
+            "$NETWORK_CREDENTIAL_TMP" \
+            "$NETWORK_FSTAB_ORIGINAL" \
+            "$NETWORK_FSTAB_CANDIDATE"
+
+        printf 'username=%s\npassword=%s\n' \
+            "$NETWORK_USERNAME" \
+            "$NETWORK_PASSWORD" \
+            > "$NETWORK_CREDENTIAL_TMP"
+
+        NETWORK_PASSWORD=""
+        NETWORK_PASSWORD_CONFIRM=""
+
+        cp -- "$NETWORK_FSTAB" "$NETWORK_FSTAB_ORIGINAL"
+        cp -- "$NETWORK_FSTAB" "$NETWORK_FSTAB_CANDIDATE"
+
+        {
+            echo
+            echo "$NETWORK_FSTAB_BEGIN"
+
+            printf '%s %s cifs %s 0 0\n' \
+                "$NETWORK_SHARE" \
+                "$NETWORK_MOUNTPOINT" \
+                "ro,noauto,user,_netdev,credentials=$NETWORK_CREDENTIALS,uid=$NETWORK_UID,gid=$NETWORK_GID,vers=3.0,cache=strict,nosuid,nodev,noexec"
+
+            echo "$NETWORK_FSTAB_END"
+        } >> "$NETWORK_FSTAB_CANDIDATE"
+
+        echo
+        echo "Validating generated fstab configuration..."
+
+        if ! findmnt \
+            --verify \
+            --tab-file "$NETWORK_FSTAB_CANDIDATE"
+        then
+            network_cleanup_temp
+            die "Generated Network Share fstab configuration is invalid."
+        fi
+
+        echo "Installing protected Network Share configuration..."
+
+        if [[ ! -d "$NETWORK_CONFIG_DIR" ]]; then
+            if ! sudo install \
+                -d \
+                -o root \
+                -g root \
+                -m 0755 \
+                "$NETWORK_CONFIG_DIR"
+            then
+                network_cleanup_temp
+                die "Could not create BareFront system configuration directory."
+            fi
+
+            NETWORK_CONFIG_DIR_CREATED=1
+        fi
+
+        if ! sudo install \
+            -d \
+            -o root \
+            -g root \
+            -m 0755 \
+            "$NETWORK_MOUNTPOINT"
+        then
+            network_rollback_install
+            die "Could not create BareFront Network Share mountpoint."
+        fi
+
+        NETWORK_MOUNTPOINT_CREATED=1
+
+        if ! sudo install \
+            -o root \
+            -g "$NETWORK_GROUP" \
+            -m 0640 \
+            "$NETWORK_CREDENTIAL_TMP" \
+            "$NETWORK_CREDENTIALS"
+        then
+            network_rollback_install
+            die "Could not install Network Share credentials."
+        fi
+
+        NETWORK_CREDENTIALS_INSTALLED=1
+
+        if ! sudo install \
+            -o root \
+            -g root \
+            -m 0644 \
+            "$NETWORK_FSTAB_CANDIDATE" \
+            "$NETWORK_FSTAB"
+        then
+            network_rollback_install
+            die "Could not install BareFront Network Share fstab entry."
+        fi
+
+        NETWORK_FSTAB_INSTALLED=1
+
+        if ! sudo "$NETWORK_SYSTEMCTL" daemon-reload; then
+            echo "daemon-reload failed; rolling back Network Share configuration..."
+
+            network_rollback_install
+
+            die "systemd daemon-reload failed; Network Share configuration rolled back."
+        fi
+
+        network_cleanup_temp
+
+        echo
+        echo "Network Share configuration installed."
+        echo "Mountpoint:"
+        echo "  $NETWORK_MOUNTPOINT"
+        echo
+        echo "BareFront will mount it only when checking content sources."
+
+    else
+
+        echo
+        echo "Network Share configuration skipped."
+        echo "Local and External Media sources remain available."
+
+    fi
+fi
 
 
 # ============================================================

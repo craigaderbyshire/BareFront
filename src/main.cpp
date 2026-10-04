@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
@@ -4350,13 +4351,307 @@ bool runContentSourcePreflight(
     Uint32 checkStarted =
         SDL_GetTicks();
 
-    auto restartCheck =
+    pid_t sourcePreparationPid =
+        -1;
+
+    bool discoveryReady =
+        false;
+
+    fs::path sourcePreparationHelper =
+        barefrontRoot /
+        "scripts" /
+        "prepare_content_sources.sh";
+
+    if (const char* overrideHelper =
+            std::getenv(
+                "BAREFRONT_CONTENT_PREPARE_HELPER"
+            ))
+    {
+        if (*overrideHelper)
+        {
+            sourcePreparationHelper =
+                overrideHelper;
+        }
+    }
+
+
+    auto stopSourcePreparation =
+        [&]()
+        {
+            if (sourcePreparationPid <= 0)
+            {
+                return;
+            }
+
+            int status =
+                0;
+
+            pid_t result =
+                waitpid(
+                    sourcePreparationPid,
+                    &status,
+                    WNOHANG
+                );
+
+            if (result == 0)
+            {
+                const pid_t processGroup =
+                    getpgid(
+                        sourcePreparationPid
+                    );
+
+                if (processGroup ==
+                    sourcePreparationPid)
+                {
+                    kill(
+                        -sourcePreparationPid,
+                        SIGTERM
+                    );
+                }
+                else
+                {
+                    kill(
+                        sourcePreparationPid,
+                        SIGTERM
+                    );
+                }
+
+                for (int attempt = 0;
+                     attempt < 25;
+                     ++attempt)
+                {
+                    result =
+                        waitpid(
+                            sourcePreparationPid,
+                            &status,
+                            WNOHANG
+                        );
+
+                    if (result ==
+                        sourcePreparationPid)
+                    {
+                        break;
+                    }
+
+                    if (result < 0 &&
+                        errno != EINTR)
+                    {
+                        break;
+                    }
+
+                    SDL_Delay(
+                        10
+                    );
+                }
+
+                if (result == 0)
+                {
+                    const pid_t finalProcessGroup =
+                        getpgid(
+                            sourcePreparationPid
+                        );
+
+                    if (finalProcessGroup ==
+                        sourcePreparationPid)
+                    {
+                        kill(
+                            -sourcePreparationPid,
+                            SIGKILL
+                        );
+                    }
+                    else
+                    {
+                        kill(
+                            sourcePreparationPid,
+                            SIGKILL
+                        );
+                    }
+
+                    while (waitpid(
+                               sourcePreparationPid,
+                               &status,
+                               0) < 0 &&
+                           errno == EINTR)
+                    {
+                    }
+                }
+            }
+
+            sourcePreparationPid =
+                -1;
+        };
+
+
+    auto startSourcePreparation =
+        [&]()
+        {
+            stopSourcePreparation();
+
+            const std::string helperPath =
+                sourcePreparationHelper.string();
+
+            if (access(
+                    helperPath.c_str(),
+                    X_OK) != 0)
+            {
+                std::cerr
+                    << "Content source preparation helper "
+                    << "is unavailable: "
+                    << helperPath
+                    << '\n';
+
+                return false;
+            }
+
+            const pid_t child =
+                fork();
+
+            if (child < 0)
+            {
+                std::cerr
+                    << "Unable to start content source "
+                    << "preparation helper: "
+                    << std::strerror(errno)
+                    << '\n';
+
+                return false;
+            }
+
+            if (child == 0)
+            {
+                (void)setpgid(
+                    0,
+                    0
+                );
+
+                execl(
+                    helperPath.c_str(),
+                    helperPath.c_str(),
+                    static_cast<char*>(nullptr)
+                );
+
+                _exit(
+                    127
+                );
+            }
+
+            (void)setpgid(
+                child,
+                child
+            );
+
+            sourcePreparationPid =
+                child;
+
+            std::cout
+                << "Preparing optional content sources...\n";
+
+            return true;
+        };
+
+
+    auto sourcePreparationFinished =
+        [&]()
+        {
+            if (sourcePreparationPid <= 0)
+            {
+                return true;
+            }
+
+            int status =
+                0;
+
+            const pid_t result =
+                waitpid(
+                    sourcePreparationPid,
+                    &status,
+                    WNOHANG
+                );
+
+            if (result == 0)
+            {
+                return false;
+            }
+
+            if (result < 0)
+            {
+                if (errno == EINTR)
+                {
+                    return false;
+                }
+
+                std::cerr
+                    << "Content source preparation wait failed: "
+                    << std::strerror(errno)
+                    << '\n';
+            }
+            else if (WIFEXITED(status))
+            {
+                std::cout
+                    << "Content source preparation exited: "
+                    << WEXITSTATUS(status)
+                    << '\n';
+            }
+            else if (WIFSIGNALED(status))
+            {
+                std::cout
+                    << "Content source preparation ended by signal: "
+                    << WTERMSIG(status)
+                    << '\n';
+            }
+
+            sourcePreparationPid =
+                -1;
+
+            return true;
+        };
+
+
+    auto beginDiscovery =
         [&]()
         {
             sources =
                 discoverContentSources(
                     barefrontRoot
                 );
+
+            for (ContentSourceStatus& source :
+                 sources)
+            {
+                source.available =
+                    false;
+            }
+
+            discoveryReady =
+                true;
+
+            checkStarted =
+                SDL_GetTicks();
+
+            std::cout
+                << "Content source acquisition complete; "
+                << "discovering sources...\n";
+        };
+
+
+    auto restartCheck =
+        [&]()
+        {
+            // Populate the three display rows immediately.
+            // Final discovery is repeated after preparation
+            // completes because External/Network roots may
+            // have appeared while the helper was running.
+            sources =
+                discoverContentSources(
+                    barefrontRoot
+                );
+
+            for (ContentSourceStatus& source :
+                 sources)
+            {
+                source.available =
+                    false;
+            }
 
             availableIndexes.clear();
 
@@ -4369,11 +4664,19 @@ bool runContentSourcePreflight(
             activationError =
                 false;
 
+            discoveryReady =
+                false;
+
             checkStarted =
                 SDL_GetTicks();
 
             std::cout
                 << "Checking content sources...\n";
+
+            if (!startSourcePreparation())
+            {
+                beginDiscovery();
+            }
         };
 
     auto activateSelection =
@@ -4422,11 +4725,22 @@ bool runContentSourcePreflight(
 
     while (running)
     {
-        const Uint32 elapsed =
-            SDL_GetTicks() -
-            checkStarted;
+        if (checking &&
+            !discoveryReady &&
+            sourcePreparationPid > 0 &&
+            sourcePreparationFinished())
+        {
+            beginDiscovery();
+        }
 
-        if (checking)
+        const Uint32 elapsed =
+            discoveryReady
+                ? SDL_GetTicks() -
+                      checkStarted
+                : 0;
+
+        if (checking &&
+            discoveryReady)
         {
             if (elapsed >= 350 &&
                 !sources.empty())
@@ -4983,6 +5297,8 @@ bool runContentSourcePreflight(
         0,
         0
     );
+
+    stopSourcePreparation();
 
     return accepted;
 }
