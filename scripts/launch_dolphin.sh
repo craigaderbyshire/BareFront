@@ -201,6 +201,7 @@ exec "${LAUNCH_ENV[@]}" \
             -u "$DOLPHIN_USER_DIR" \
             -C Dolphin.Analytics.PermissionAsked=True \
             -C Dolphin.Analytics.Enabled=False \
+            -C Dolphin.Core.AutoDiscChange=True \
             -C Dolphin.Core.SkipIPL=False \
             -C Dolphin.Interface.ConfirmStop=False \
             -C GFX.Settings.InternalResolution=1 \

@@ -4535,7 +4535,7 @@ int main()
             "assets/systems/gamecube.png",
             "roms/gamecube",
             "assets/games/gamecube",
-            { ".iso", ".gcm", ".rvz", ".gcz" }
+            { ".iso", ".gcm", ".rvz", ".gcz", ".m3u" }
         },
 
         {
