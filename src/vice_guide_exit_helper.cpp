@@ -59,6 +59,69 @@ int main()
 
     openControllers();
 
+    auto sendViceDiscKey = [](bool previous) -> bool
+    {
+        Display* display = XOpenDisplay(nullptr);
+
+        if (!display)
+        {
+            std::cerr << "Cannot open nested X display for disc change\n";
+            return false;
+        }
+
+        Window focused = None;
+        int revert = 0;
+
+        XGetInputFocus(display, &focused, &revert);
+
+        if (focused == None || focused == PointerRoot)
+        {
+            std::cerr << "No focused VICE window for disc change\n";
+            XCloseDisplay(display);
+            return false;
+        }
+
+        const KeyCode alt =
+            XKeysymToKeycode(display, XK_Alt_L);
+
+        const KeyCode shift =
+            XKeysymToKeycode(display, XK_Shift_L);
+
+        const KeyCode n =
+            XKeysymToKeycode(display, XK_n);
+
+        if (!alt || !shift || !n)
+        {
+            std::cerr << "Required disc-change key unavailable\n";
+            XCloseDisplay(display);
+            return false;
+        }
+
+        if (previous)
+        {
+            XTestFakeKeyEvent(display, shift, True, 0);
+        }
+
+        XTestFakeKeyEvent(display, alt, True, 0);
+        XTestFakeKeyEvent(display, n, True, 0);
+        XSync(display, False);
+
+        SDL_Delay(50);
+
+        XTestFakeKeyEvent(display, n, False, 0);
+        XTestFakeKeyEvent(display, alt, False, 0);
+
+        if (previous)
+        {
+            XTestFakeKeyEvent(display, shift, False, 0);
+        }
+
+        XSync(display, False);
+        XCloseDisplay(display);
+
+        return true;
+    };
+
     std::cout
         << "VICE Guide helper active. DISPLAY="
         << (std::getenv("DISPLAY")
@@ -66,7 +129,9 @@ int main()
                 : "unset")
         << "\n"
         << "Quick Guide tap -> ignored\n"
-        << "Guide hold: 1500 ms -> Exit\n";
+        << "Guide hold: 1500 ms -> Exit\n"
+        << "LB+RB+Y -> Next disk\n"
+        << "LB+RB+X -> Previous disk\n";
 
     std::cout.flush();
 
@@ -151,6 +216,61 @@ int main()
         {
             std::cout << "VICE Guide helper quitting" << std::endl;
             break;
+        }
+
+        if (event.type == SDL_CONTROLLERBUTTONDOWN)
+        {
+            SDL_GameController* controller =
+                SDL_GameControllerFromInstanceID(
+                    event.cbutton.which
+                );
+
+            if (controller)
+            {
+                const bool lb =
+                    SDL_GameControllerGetButton(
+                        controller,
+                        SDL_CONTROLLER_BUTTON_LEFTSHOULDER
+                    );
+
+                const bool rb =
+                    SDL_GameControllerGetButton(
+                        controller,
+                        SDL_CONTROLLER_BUTTON_RIGHTSHOULDER
+                    );
+
+                if (lb && rb &&
+                    event.cbutton.button ==
+                        SDL_CONTROLLER_BUTTON_Y)
+                {
+                    std::cout << "Disc NEXT chord detected\n";
+                    std::cout.flush();
+
+                    if (sendViceDiscKey(false))
+                    {
+                        std::cout << "Alt+N sent to VICE\n";
+                        std::cout.flush();
+                    }
+
+                    continue;
+                }
+
+                if (lb && rb &&
+                    event.cbutton.button ==
+                        SDL_CONTROLLER_BUTTON_X)
+                {
+                    std::cout << "Disc PREVIOUS chord detected\n";
+                    std::cout.flush();
+
+                    if (sendViceDiscKey(true))
+                    {
+                        std::cout << "Shift+Alt+N sent to VICE\n";
+                        std::cout.flush();
+                    }
+
+                    continue;
+                }
+            }
         }
 
         if (event.type == SDL_CONTROLLERBUTTONUP &&

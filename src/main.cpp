@@ -4462,7 +4462,7 @@ int main()
             "assets/systems/c64.png",
             "roms/c64",
             "assets/games/c64",
-            { ".d64", ".t64", ".prg", ".crt", ".vfl", ".zip" }
+            { ".d64", ".t64", ".tap", ".prg", ".crt", ".m3u", ".zip" }
         },
 
 

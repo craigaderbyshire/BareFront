@@ -1,0 +1,30 @@
+# BareFront C64 controller mapping
+#
+# Microsoft Xbox Controller / Xbox Series controller
+# VICE GTK3 3.9
+#
+# Default gameplay port: C64 joystick port 2
+#
+# Left stick and D-pad = directions
+# A = fire
+
+!CLEAR
+
+# Left stick X
+0 0 0 1 8
+0 0 1 1 4
+
+# Left stick Y
+0 0 2 1 2
+0 0 3 1 1
+
+# D-pad X
+0 0 12 1 8
+0 0 13 1 4
+
+# D-pad Y
+0 0 14 1 2
+0 0 15 1 1
+
+# Xbox A = fire
+0 1 0 1 16

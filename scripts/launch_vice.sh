@@ -17,6 +17,14 @@ GAMESCOPE="$BAREFRONT_GAMESCOPE"
 export VK_IMPLICIT_LAYER_PATH="$BAREFRONT_VKBASALT_LAYER_DIR"
 PRESENTATION_HELPER="$ROOT/c64_presentation_helper"
 GUIDE_HELPER="$ROOT/emulators/vice/vice_guide_exit_helper"
+KEYBOARD_HELPER="$ROOT/emulators/vice/vice_keyboard_helper"
+C64_KEYMAP="$ROOT/emulators/vice/barefront-c64.vkm"
+
+# BareFront owns the C64 GTK3 joystick map so controller
+# behaviour is deterministic on every installation.
+JOYMAP_SOURCE="$ROOT/emulators/vice/barefront-c64-xbox.vjm"
+JOYMAP_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/vice"
+JOYMAP_FILE="$JOYMAP_DIR/gtk3-joymap-C64SC.vjm"
 
 NATIVE_WIDTH=408
 NATIVE_HEIGHT=293
@@ -35,6 +43,7 @@ VKBASALT_CONFIG="/tmp/barefront-vkbasalt-c64.conf"
 GAMESCOPE_PID=""
 PANELS_HIDDEN=0
 C64_TEXTURE_DIR=""
+C64_TEMP_VFL=""
 
 DISPLAY_OUTPUT=""
 ORIGINAL_MODE=""
@@ -67,7 +76,8 @@ for required in \
     "$VICE" \
     "$GAMESCOPE" \
     "$PRESENTATION_HELPER" \
-    "$GUIDE_HELPER"
+    "$GUIDE_HELPER" \
+    "$KEYBOARD_HELPER"
 do
     if [[ ! -x "$required" ]]; then
         echo "Required C64 executable not found:" >&2
@@ -84,7 +94,8 @@ for required in \
     "$ROOT/bios/c64/dos1541-325302-01+901229-05.bin" \
     "$BARECRT_SHADER" \
     "$BEZEL_SHADER" \
-    "$BEZEL"
+    "$BEZEL" \
+    "$C64_KEYMAP"
 do
     if [[ ! -f "$required" ]]; then
         echo "Required C64 file not found:" >&2
@@ -284,6 +295,10 @@ cleanup()
         rm -rf -- "$C64_TEXTURE_DIR"
     fi
 
+    if [[ -n "$C64_TEMP_VFL" ]]; then
+        rm -f -- "$C64_TEMP_VFL"
+    fi
+
     exit "$exit_code"
 }
 
@@ -478,8 +493,33 @@ $CRT_SETTINGS
 EOF2
 
 
+if [[ ! -f "$JOYMAP_SOURCE" ]]; then
+    echo "Required BareFront C64 joymap not found:" >&2
+    echo "  $JOYMAP_SOURCE" >&2
+    exit 1
+fi
+
+if [[ "$MODE" != "--dry-run" ]]; then
+
+    mkdir -p "$JOYMAP_DIR"
+
+    if [[ ! -f "$JOYMAP_FILE" ]] ||
+       ! cmp -s "$JOYMAP_SOURCE" "$JOYMAP_FILE"
+    then
+        install -m 0644 "$JOYMAP_SOURCE" "$JOYMAP_FILE"
+    fi
+
+fi
+
 VICE_ARGS=(
     -hotkeyfile "$ROOT/emulators/vice/barefront.vhk"
+
+    # BareFront C64 controller keyboard.
+    # F9 is a private transport for C64 RUN/STOP;
+    # physical Escape remains BareFront exit.
+    -keymap 2
+    -symkeymap "$C64_KEYMAP"
+
     +confirmonexit
 
     -pal
@@ -503,22 +543,167 @@ VICE_ARGS=(
     -dos1541 "$ROOT/bios/c64/dos1541-325302-01+901229-05.bin"
 
     -drive8type 1541
+
+    # BareFront C64 controller contract:
+    # Xbox controller -> standard joystick on C64 port 2.
+    -controlport1device 0
+    -joydev1 0
+    -controlport2device 1
+    -joydev2 4
 )
 
 
 # ------------------------------------------------------------
-# Native VICE multi-disk support.
+# BareFront C64 multidisc support.
 #
-# A .vfl file is presented to BareFront as one game. The first
-# non-comment entry is autostarted and VICE receives the whole
-# fliplist so its normal disk-next / disk-previous controls
-# remain available.
+# BareFront's canonical public playlist format is .m3u.
+# VICE uses its native .vfl fliplist internally.
+#
+# For .m3u:
+#   - validate ordered relative media paths
+#   - generate a hidden VICE fliplist beside the playlist
+#   - use CRLF separators with no final line terminator,
+#     matching the already-proven native VICE fliplist format
+#   - remove the generated fliplist during normal launcher
+#     cleanup before control returns to BareFront
+#
+# Direct .vfl launching remains supported for compatibility,
+# but .vfl is an implementation detail rather than BareFront's
+# canonical multidisc library format.
 # ------------------------------------------------------------
 
 ROM_EXTENSION="${ROM##*.}"
 ROM_EXTENSION="${ROM_EXTENSION,,}"
 
-if [[ "$ROM_EXTENSION" == "vfl" ]]; then
+FLIPLIST=""
+
+if [[ "$ROM_EXTENSION" == "m3u" ]]; then
+
+    C64_TEMP_VFL="$(
+        mktemp \
+            "$(dirname "$ROM")/.barefront-vice.XXXXXX.vfl"
+    )"
+
+    python3 - "$ROM" "$C64_TEMP_VFL" <<'PY_M3U'
+import os
+import re
+import sys
+from pathlib import Path
+
+supplied = Path(sys.argv[1])
+output = Path(sys.argv[2])
+
+absolute_playlist = supplied.absolute()
+
+try:
+    root = absolute_playlist.parent.resolve(strict=True)
+    playlist = absolute_playlist.resolve(strict=True)
+except FileNotFoundError:
+    raise SystemExit("Cannot resolve C64 playlist")
+
+try:
+    playlist.relative_to(root)
+except ValueError:
+    raise SystemExit(
+        "Playlist resolves outside its game directory"
+    )
+
+if not playlist.is_file():
+    raise SystemExit("Playlist is not a regular file")
+
+media = []
+seen = set()
+
+try:
+    handle = playlist.open(
+        "r",
+        encoding="utf-8-sig",
+        errors="strict"
+    )
+except OSError:
+    raise SystemExit("Cannot open playlist")
+
+with handle:
+
+    for line_number, raw in enumerate(handle, 1):
+
+        line = raw.strip(" \t\r\n")
+
+        if not line or line.startswith("#"):
+            continue
+
+        def reject(reason):
+            raise SystemExit(
+                f"Line {line_number}: {reason}"
+            )
+
+        if "\x00" in line:
+            reject("NUL character in media path")
+
+        if "\\" in line:
+            reject("Backslash path separator")
+
+        if re.match(r"^[A-Za-z]:", line):
+            reject("Windows absolute path")
+
+        relative = Path(line)
+
+        if relative.is_absolute():
+            reject("Absolute path")
+
+        if ".." in relative.parts:
+            reject("Parent-directory traversal")
+
+        resolved = (root / relative).resolve(strict=False)
+
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            reject("Media resolves outside game directory")
+
+        if resolved == playlist:
+            reject("Playlist references itself")
+
+        if not resolved.is_file():
+            reject(
+                "Referenced media is missing or not a regular file"
+            )
+
+        if resolved in seen:
+            reject("Duplicate media path")
+
+        seen.add(resolved)
+
+        # Preserve the playlist's relative media spelling/order.
+        # The generated VFL deliberately lives beside the M3U,
+        # so VICE resolves these paths exactly as intended.
+        media.append(relative.as_posix())
+
+if not media:
+    raise SystemExit("Playlist contains no media")
+
+lines = [
+    "; Vice fliplist file",
+    *media,
+]
+
+# Proven VICE representation:
+# CRLF between records, no terminator after the final record.
+output.write_bytes(
+    "\r\n".join(lines).encode("utf-8")
+)
+PY_M3U
+
+    FLIPLIST="$C64_TEMP_VFL"
+
+elif [[ "$ROM_EXTENSION" == "vfl" ]]; then
+
+    FLIPLIST="$ROM"
+
+fi
+
+
+if [[ -n "$FLIPLIST" ]]; then
 
     FIRST_DISK="$(
         awk '
@@ -535,19 +720,21 @@ if [[ "$ROM_EXTENSION" == "vfl" ]]; then
                     exit
                 }
             }
-        ' "$ROM"
+        ' "$FLIPLIST"
     )"
 
     if [[ -z "$FIRST_DISK" ]]; then
         echo "VICE fliplist contains no disk images:" >&2
-        echo "  $ROM" >&2
+        echo "  $FLIPLIST" >&2
         exit 1
     fi
 
     if [[ "$FIRST_DISK" == /* ]]; then
         AUTOSTART_DISK="$FIRST_DISK"
     else
-        AUTOSTART_DISK="$(dirname "$ROM")/$FIRST_DISK"
+        AUTOSTART_DISK="$(
+            dirname "$FLIPLIST"
+        )/$FIRST_DISK"
     fi
 
     if [[ ! -f "$AUTOSTART_DISK" ]]; then
@@ -556,11 +743,17 @@ if [[ "$ROM_EXTENSION" == "vfl" ]]; then
         exit 1
     fi
 
-    echo "  Fliplist:    $(basename "$ROM")"
+    if [[ "$ROM_EXTENSION" == "m3u" ]]; then
+        echo "  Playlist:    $(basename "$ROM")"
+        echo "  VICE list:   $(basename "$FLIPLIST")"
+    else
+        echo "  Fliplist:    $(basename "$FLIPLIST")"
+    fi
+
     echo "  First disk:  $(basename "$AUTOSTART_DISK")"
 
     VICE_ARGS+=(
-        -flipname "$ROM"
+        -flipname "$FLIPLIST"
         -autostart "$AUTOSTART_DISK"
     )
 
@@ -589,15 +782,22 @@ env \
         -- \
         /bin/bash -c '
               guide="$1"
-              shift
+              keyboard="$2"
+              shift 2
 
               BAREFRONT_C64_GUIDE_SESSION=1 "$guide" &
               guide_pid=$!
+
+              BAREFRONT_C64_KEYBOARD_SESSION=1 "$keyboard" &
+              keyboard_pid=$!
 
               "$@" &
               game_pid=$!
 
               cleanup() {
+                  kill -TERM "$keyboard_pid" 2>/dev/null || true
+                  wait "$keyboard_pid" 2>/dev/null || true
+
                   kill -TERM "$guide_pid" 2>/dev/null || true
                   wait "$guide_pid" 2>/dev/null || true
               }
@@ -613,6 +813,7 @@ env \
               exit "$status"
         ' _ \
         "$GUIDE_HELPER" \
+        "$KEYBOARD_HELPER" \
         "$VICE" \
         "${VICE_ARGS[@]}" &
 
