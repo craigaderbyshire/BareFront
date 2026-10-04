@@ -1,6 +1,7 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 #include <SDL2/SDL_ttf.h>
+#include "content_sources.h"
 #include "shader_preferences.h"
 #include "curated_library.h"
 #include "multidisc_launch_guard.h"
@@ -4020,6 +4021,974 @@ SDL_JoystickID controllerInstanceId(
 
 
 // --------------------------------------------------
+// Portable content source pre-flight
+//
+// BareFront itself never mounts privileged filesystems
+// here.  This stage discovers content which is already
+// accessible to the user:
+//
+//   Local          content/local/barefront
+//   External Media mounted removable media
+//   Network Share  /mnt/barefront-network/barefront
+//
+// External and network mounting are separate runtime /
+// installer responsibilities.
+//
+// The environment overrides below exist so this startup
+// path can be tested safely against disposable roots.
+// Every supplied root must still satisfy BareFront's
+// roms/ + bios/ source contract.
+// --------------------------------------------------
+
+struct ContentSourceStatus
+{
+    bfcontent::Source source;
+    bool available = false;
+};
+
+
+fs::path contentSourceEnvironmentOverride(
+    const char* variable)
+{
+    const char* value =
+        std::getenv(variable);
+
+    if (!value ||
+        !*value)
+    {
+        return {};
+    }
+
+    return fs::path(value);
+}
+
+
+fs::path findMountedExternalContentSource()
+{
+    const fs::path override =
+        contentSourceEnvironmentOverride(
+            "BAREFRONT_CONTENT_EXTERNAL_ROOT"
+        );
+
+    if (!override.empty())
+        return override;
+
+    const char* user =
+        std::getenv("USER");
+
+    if (!user ||
+        !*user)
+    {
+        return {};
+    }
+
+    const std::vector<fs::path> parents =
+    {
+        fs::path("/media") / user,
+        fs::path("/run/media") / user
+    };
+
+    std::vector<fs::path> candidates;
+
+    for (const fs::path& parent : parents)
+    {
+        std::error_code error;
+
+        if (!fs::is_directory(
+                parent,
+                error))
+        {
+            continue;
+        }
+
+        for (fs::directory_iterator iterator(
+                 parent,
+                 error);
+             !error &&
+             iterator !=
+                 fs::directory_iterator();
+             iterator.increment(error))
+        {
+            const fs::path candidate =
+                iterator->path() /
+                "barefront";
+
+            if (bfcontent::validSource(
+                    candidate))
+            {
+                candidates.push_back(
+                    candidate
+                );
+            }
+        }
+    }
+
+    std::sort(
+        candidates.begin(),
+        candidates.end()
+    );
+
+    if (candidates.empty())
+        return {};
+
+    return candidates.front();
+}
+
+
+std::vector<ContentSourceStatus>
+discoverContentSources(
+    const fs::path& barefrontRoot)
+{
+    fs::path local =
+        contentSourceEnvironmentOverride(
+            "BAREFRONT_CONTENT_LOCAL_ROOT"
+        );
+
+    if (local.empty())
+    {
+        local =
+            barefrontRoot /
+            "content" /
+            "local" /
+            "barefront";
+    }
+
+    const fs::path external =
+        findMountedExternalContentSource();
+
+    fs::path network =
+        contentSourceEnvironmentOverride(
+            "BAREFRONT_CONTENT_NETWORK_ROOT"
+        );
+
+    if (network.empty())
+    {
+        network =
+            fs::path(
+                "/mnt/barefront-network/barefront"
+            );
+    }
+
+    return
+    {
+        {
+            {
+                "Local",
+                local
+            },
+            false
+        },
+        {
+            {
+                "External Media",
+                external
+            },
+            false
+        },
+        {
+            {
+                "Network Share",
+                network
+            },
+            false
+        }
+    };
+}
+
+
+void drawContentSourceText(
+    SDL_Renderer* renderer,
+    TTF_Font* font,
+    const std::string& text,
+    int x,
+    int y,
+    SDL_Color colour)
+{
+    SDL_Surface* surface =
+        TTF_RenderUTF8_Blended(
+            font,
+            text.c_str(),
+            colour
+        );
+
+    if (!surface)
+        return;
+
+    SDL_Texture* texture =
+        SDL_CreateTextureFromSurface(
+            renderer,
+            surface
+        );
+
+    if (texture)
+    {
+        SDL_Rect destination =
+        {
+            x,
+            y,
+            surface->w,
+            surface->h
+        };
+
+        SDL_RenderCopy(
+            renderer,
+            texture,
+            nullptr,
+            &destination
+        );
+
+        SDL_DestroyTexture(
+            texture
+        );
+    }
+
+    SDL_FreeSurface(
+        surface
+    );
+}
+
+
+bool runContentSourcePreflight(
+    SDL_Renderer* renderer,
+    const fs::path& barefrontRoot)
+{
+    const fs::path fontPath =
+        barefrontRoot /
+        "assets" /
+        "fonts" /
+        "PetMe64.ttf";
+
+    TTF_Font* headingFont =
+        TTF_OpenFont(
+            fontPath.string().c_str(),
+            38
+        );
+
+    TTF_Font* normalFont =
+        TTF_OpenFont(
+            fontPath.string().c_str(),
+            26
+        );
+
+    TTF_Font* smallFont =
+        TTF_OpenFont(
+            fontPath.string().c_str(),
+            20
+        );
+
+    if (!headingFont ||
+        !normalFont ||
+        !smallFont)
+    {
+        std::cerr
+            << "Content pre-flight font error: "
+            << TTF_GetError()
+            << '\n';
+
+        if (smallFont)
+            TTF_CloseFont(smallFont);
+
+        if (normalFont)
+            TTF_CloseFont(normalFont);
+
+        if (headingFont)
+            TTF_CloseFont(headingFont);
+
+        return false;
+    }
+
+    SDL_GameControllerEventState(
+        SDL_ENABLE
+    );
+
+    SDL_GameController* controller =
+        openFirstGameController();
+
+    SDL_RenderSetLogicalSize(
+        renderer,
+        1280,
+        720
+    );
+
+    const SDL_Color white =
+    {
+        255,
+        255,
+        255,
+        255
+    };
+
+    const SDL_Color grey =
+    {
+        150,
+        150,
+        150,
+        255
+    };
+
+    std::vector<ContentSourceStatus>
+        sources;
+
+    std::vector<std::size_t>
+        availableIndexes;
+
+    std::size_t selected =
+        0;
+
+    bool checking =
+        true;
+
+    bool activationError =
+        false;
+
+    bool accepted =
+        false;
+
+    bool running =
+        true;
+
+    Uint32 checkStarted =
+        SDL_GetTicks();
+
+    auto restartCheck =
+        [&]()
+        {
+            sources =
+                discoverContentSources(
+                    barefrontRoot
+                );
+
+            availableIndexes.clear();
+
+            selected =
+                0;
+
+            checking =
+                true;
+
+            activationError =
+                false;
+
+            checkStarted =
+                SDL_GetTicks();
+
+            std::cout
+                << "Checking content sources...\n";
+        };
+
+    auto activateSelection =
+        [&](std::size_t sourceIndex)
+        {
+            if (sourceIndex >=
+                sources.size())
+            {
+                return;
+            }
+
+            const bfcontent::Source& source =
+                sources[sourceIndex].source;
+
+            if (!bfcontent::activate(
+                    barefrontRoot,
+                    source))
+            {
+                std::cerr
+                    << "Content source activation failed: "
+                    << source.name
+                    << '\n';
+
+                activationError =
+                    true;
+
+                return;
+            }
+
+            std::cout
+                << "Content source selected: "
+                << source.name
+                << '\n'
+                << "Content root: "
+                << source.root
+                << '\n';
+
+            accepted =
+                true;
+
+            running =
+                false;
+        };
+
+    restartCheck();
+
+    while (running)
+    {
+        const Uint32 elapsed =
+            SDL_GetTicks() -
+            checkStarted;
+
+        if (checking)
+        {
+            if (elapsed >= 350 &&
+                !sources.empty())
+            {
+                sources[0].available =
+                    bfcontent::validSource(
+                        sources[0].source.root
+                    );
+            }
+
+            if (elapsed >= 700 &&
+                sources.size() > 1)
+            {
+                sources[1].available =
+                    bfcontent::validSource(
+                        sources[1].source.root
+                    );
+            }
+
+            if (elapsed >= 1050 &&
+                sources.size() > 2)
+            {
+                sources[2].available =
+                    bfcontent::validSource(
+                        sources[2].source.root
+                    );
+            }
+
+            if (elapsed >= 1200)
+            {
+                availableIndexes.clear();
+
+                for (std::size_t index = 0;
+                     index < sources.size();
+                     ++index)
+                {
+                    if (sources[index].available)
+                    {
+                        availableIndexes.push_back(
+                            index
+                        );
+                    }
+                }
+
+                checking =
+                    false;
+
+                selected =
+                    0;
+
+                std::cout
+                    << "Available content sources: "
+                    << availableIndexes.size()
+                    << '\n';
+
+                for (std::size_t index :
+                     availableIndexes)
+                {
+                    std::cout
+                        << "  "
+                        << sources[index].source.name
+                        << " -> "
+                        << sources[index].source.root
+                        << '\n';
+                }
+
+                if (availableIndexes.size() == 1)
+                {
+                    const std::size_t only =
+                        availableIndexes.front();
+
+                    if (bfcontent::activate(
+                            barefrontRoot,
+                            sources[only].source))
+                    {
+                        std::cout
+                            << "Content source auto-selected: "
+                            << sources[only].source.name
+                            << '\n';
+
+                        SDL_SetRenderDrawColor(
+                            renderer,
+                            0,
+                            0,
+                            0,
+                            255
+                        );
+
+                        SDL_RenderClear(
+                            renderer
+                        );
+
+                        drawContentSourceText(
+                            renderer,
+                            headingFont,
+                            "CONTENT SOURCE",
+                            110,
+                            95,
+                            white
+                        );
+
+                        drawContentSourceText(
+                            renderer,
+                            normalFont,
+                            sources[only].source.name,
+                            150,
+                            220,
+                            white
+                        );
+
+                        drawContentSourceText(
+                            renderer,
+                            smallFont,
+                            "AUTO-SELECTED",
+                            150,
+                            275,
+                            white
+                        );
+
+                        SDL_RenderPresent(
+                            renderer
+                        );
+
+                        SDL_Delay(
+                            800
+                        );
+
+                        accepted =
+                            true;
+
+                        running =
+                            false;
+                    }
+                    else
+                    {
+                        activationError =
+                            true;
+                    }
+                }
+            }
+        }
+
+        SDL_Event event;
+
+        while (running &&
+               SDL_PollEvent(
+                   &event))
+        {
+            if (event.type ==
+                SDL_QUIT)
+            {
+                running =
+                    false;
+            }
+
+            // ----------------------------------------------
+            // Controller hot-plug
+            //
+            // Mirror BareFront's normal event loop so a pad
+            // which appears after SDL startup can immediately
+            // control the source-selection screen.
+            // ----------------------------------------------
+
+            if (event.type ==
+                SDL_CONTROLLERDEVICEADDED)
+            {
+                // event.cdevice.which is a device index here.
+                if (!controller)
+                {
+                    controller =
+                        openGameController(
+                            event.cdevice.which
+                        );
+                }
+
+                continue;
+            }
+
+            if (event.type ==
+                SDL_CONTROLLERDEVICEREMOVED)
+            {
+                // event.cdevice.which is an instance ID here.
+                if (controller &&
+                    controllerInstanceId(
+                        controller) ==
+                        event.cdevice.which)
+                {
+                    const char* name =
+                        SDL_GameControllerName(
+                            controller
+                        );
+
+                    std::cout
+                        << "Controller disconnected: "
+                        << (name ? name : "Unknown controller")
+                        << '\n';
+
+                    SDL_GameControllerClose(
+                        controller
+                    );
+
+                    controller =
+                        nullptr;
+
+                    controller =
+                        openFirstGameController();
+                }
+
+                continue;
+            }
+
+            if (event.type ==
+                SDL_KEYDOWN)
+            {
+                if (event.key.keysym.sym ==
+                    SDLK_ESCAPE)
+                {
+                    running =
+                        false;
+                }
+
+                if (!checking &&
+                    (availableIndexes.empty() ||
+                     activationError) &&
+                    (event.key.keysym.sym ==
+                         SDLK_RETURN ||
+                     event.key.keysym.sym ==
+                         SDLK_SPACE))
+                {
+                    restartCheck();
+                }
+
+                if (!checking &&
+                    !activationError &&
+                    availableIndexes.size() > 1)
+                {
+                    if (event.key.keysym.sym ==
+                            SDLK_UP &&
+                        selected > 0)
+                    {
+                        --selected;
+                    }
+
+                    if (event.key.keysym.sym ==
+                            SDLK_DOWN &&
+                        selected + 1 <
+                            availableIndexes.size())
+                    {
+                        ++selected;
+                    }
+
+                    if (event.key.keysym.sym ==
+                            SDLK_RETURN ||
+                        event.key.keysym.sym ==
+                            SDLK_SPACE)
+                    {
+                        activateSelection(
+                            availableIndexes[
+                                selected
+                            ]
+                        );
+                    }
+                }
+            }
+
+            if (event.type ==
+                SDL_CONTROLLERBUTTONDOWN)
+            {
+                if (!checking &&
+                    (availableIndexes.empty() ||
+                     activationError) &&
+                    event.cbutton.button ==
+                        SDL_CONTROLLER_BUTTON_A)
+                {
+                    restartCheck();
+                }
+
+                if (!checking &&
+                    !activationError &&
+                    availableIndexes.size() > 1)
+                {
+                    switch (
+                        event.cbutton.button)
+                    {
+                        case SDL_CONTROLLER_BUTTON_DPAD_UP:
+
+                            if (selected > 0)
+                                --selected;
+
+                            break;
+
+                        case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+
+                            if (selected + 1 <
+                                availableIndexes.size())
+                            {
+                                ++selected;
+                            }
+
+                            break;
+
+                        case SDL_CONTROLLER_BUTTON_A:
+
+                            activateSelection(
+                                availableIndexes[
+                                    selected
+                                ]
+                            );
+
+                            break;
+
+                        default:
+                            break;
+                    }
+                }
+            }
+        }
+
+        if (!running)
+            break;
+
+        SDL_SetRenderDrawColor(
+            renderer,
+            0,
+            0,
+            0,
+            255
+        );
+
+        SDL_RenderClear(
+            renderer
+        );
+
+        drawContentSourceText(
+            renderer,
+            headingFont,
+            checking
+                ? "CHECKING FOR SOURCES"
+                : "CONTENT SOURCES",
+            110,
+            95,
+            white
+        );
+
+        const int firstY =
+            190;
+
+        const int rowHeight =
+            52;
+
+        for (std::size_t index = 0;
+             index < sources.size();
+             ++index)
+        {
+            drawContentSourceText(
+                renderer,
+                normalFont,
+                std::to_string(index + 1) +
+                    ". " +
+                    sources[index].source.name,
+                150,
+                firstY +
+                    static_cast<int>(
+                        index
+                    ) *
+                    rowHeight,
+                white
+            );
+
+            std::string state;
+
+            if (checking)
+            {
+                const Uint32 readyAt =
+                    350 +
+                    static_cast<Uint32>(
+                        index
+                    ) *
+                    350;
+
+                if (elapsed <
+                    readyAt)
+                {
+                    state =
+                        "CHECKING...";
+                }
+                else
+                {
+                    state =
+                        sources[index].available
+                            ? "AVAILABLE"
+                            : "NOT FOUND";
+                }
+            }
+            else
+            {
+                state =
+                    sources[index].available
+                        ? "AVAILABLE"
+                        : "NOT FOUND";
+            }
+
+            drawContentSourceText(
+                renderer,
+                smallFont,
+                state,
+                760,
+                firstY +
+                    5 +
+                    static_cast<int>(
+                        index
+                    ) *
+                    rowHeight,
+                sources[index].available
+                    ? white
+                    : grey
+            );
+        }
+
+        if (!checking &&
+            activationError)
+        {
+            drawContentSourceText(
+                renderer,
+                normalFont,
+                "CONTENT STORAGE ERROR",
+                110,
+                430,
+                white
+            );
+
+            drawContentSourceText(
+                renderer,
+                smallFont,
+                "A  RETRY",
+                150,
+                500,
+                white
+            );
+        }
+        else if (!checking &&
+                 availableIndexes.empty())
+        {
+            drawContentSourceText(
+                renderer,
+                normalFont,
+                "CONTENT STORAGE NOT FOUND",
+                110,
+                430,
+                white
+            );
+
+            drawContentSourceText(
+                renderer,
+                smallFont,
+                "A  RETRY",
+                150,
+                500,
+                white
+            );
+        }
+        else if (!checking &&
+                 availableIndexes.size() > 1)
+        {
+            drawContentSourceText(
+                renderer,
+                normalFont,
+                "SELECT CONTENT SOURCE",
+                110,
+                405,
+                white
+            );
+
+            for (std::size_t row = 0;
+                 row <
+                    availableIndexes.size();
+                 ++row)
+            {
+                const ContentSourceStatus& source =
+                    sources[
+                        availableIndexes[
+                            row
+                        ]
+                    ];
+
+                const std::string label =
+                    (row == selected
+                         ? "> "
+                         : "  ") +
+                    source.source.name;
+
+                drawContentSourceText(
+                    renderer,
+                    normalFont,
+                    label,
+                    150,
+                    465 +
+                        static_cast<int>(
+                            row
+                        ) *
+                        46,
+                    row == selected
+                        ? white
+                        : grey
+                );
+            }
+
+            drawContentSourceText(
+                renderer,
+                smallFont,
+                "A  SELECT",
+                150,
+                635,
+                white
+            );
+        }
+
+        SDL_RenderPresent(
+            renderer
+        );
+
+        SDL_Delay(
+            8
+        );
+    }
+
+    if (controller)
+    {
+        SDL_GameControllerClose(
+            controller
+        );
+    }
+
+    TTF_CloseFont(
+        smallFont
+    );
+
+    TTF_CloseFont(
+        normalFont
+    );
+
+    TTF_CloseFont(
+        headingFont
+    );
+
+    //
+    // The existing splash deliberately renders against
+    // the real output size rather than BareFront's normal
+    // 1280x720 logical canvas.
+    //
+
+    SDL_RenderSetLogicalSize(
+        renderer,
+        0,
+        0
+    );
+
+    return accepted;
+}
+
+
+// --------------------------------------------------
 // Current top-level BareFront screen
 // --------------------------------------------------
 
@@ -4187,6 +5156,35 @@ int main()
         );
 
         return 1;
+    }
+
+
+    // --------------------------------------------------
+    // Portable content source pre-flight
+    //
+    // Source selection happens before the existing splash.
+    // The installer owns creation / migration of the
+    // canonical content layout; runtime only validates and
+    // switches the single content/active selector.
+    // --------------------------------------------------
+
+    if (!runContentSourcePreflight(
+            renderer,
+            fs::current_path()))
+    {
+        SDL_DestroyRenderer(
+            renderer
+        );
+
+        SDL_DestroyWindow(
+            window
+        );
+
+        IMG_Quit();
+        TTF_Quit();
+        SDL_Quit();
+
+        return 0;
     }
 
 
