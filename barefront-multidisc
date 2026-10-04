@@ -1,0 +1,43 @@
+#!/bin/bash
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROM_LINK="$ROOT/roms"
+
+case "${1:-}" in
+    "")
+        MODE=()
+        ;;
+    --apply)
+        [[ "$#" -eq 1 ]] || exit 2
+        MODE=(--apply)
+        ;;
+    --help|-h)
+        echo "Usage:"
+        echo "  ./barefront-multidisc"
+        echo "  ./barefront-multidisc --apply"
+        exit 0
+        ;;
+    *)
+        echo "ERROR: Unknown option: $1" >&2
+        exit 2
+        ;;
+esac
+
+if [[ ! -e "$ROM_LINK" ]]; then
+    echo "ERROR: BareFront ROM source is not available." >&2
+    exit 2
+fi
+
+ROM_ROOT="$(readlink -f "$ROM_LINK")"
+
+if [[ ! -d "$ROM_ROOT" ]]; then
+    echo "ERROR: BareFront ROM source is not a directory." >&2
+    exit 2
+fi
+
+exec python3 \
+    "$ROOT/scripts/barefront_multidisc.py" \
+    --root "$ROM_ROOT" \
+    "${MODE[@]}"
