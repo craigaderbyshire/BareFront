@@ -5587,7 +5587,7 @@ if ! command -v g++ >/dev/null 2>&1; then
 fi
 
 if ! command -v pkg-config >/dev/null 2>&1 ||
-   ! pkg-config --exists sdl2 x11 xi
+   ! pkg-config --exists sdl2 x11 xi xtst
 then
     die "Amiberry Escape/Guide helper build dependencies are missing."
 fi
@@ -5605,7 +5605,7 @@ then
     if ! g++ -std=c++17 -O2 -Wall -Wextra -pedantic \
         "$AMIBERRY_ESC_SOURCE" \
         -o "$AMIBERRY_ESC_TEMP" \
-        $(pkg-config --cflags --libs sdl2 x11 xi)
+        $(pkg-config --cflags --libs sdl2 x11 xi xtst)
     then
         rm -f -- "$AMIBERRY_ESC_TEMP"
         die "Could not build the Amiberry Escape/Guide helper."

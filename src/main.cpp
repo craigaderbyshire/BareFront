@@ -4545,7 +4545,7 @@ int main()
             "assets/systems/amiga.png",
             "roms/amiga",
             "assets/games/amiga",
-            { ".adf", ".adz", ".lha", ".hdf", ".ipf", ".zip" }
+            { ".adf", ".adz", ".lha", ".hdf", ".ipf", ".m3u", ".zip" }
         }
     };
 

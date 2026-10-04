@@ -43,10 +43,8 @@ OUTPUT_HEIGHT=1080
 #   Pinball Fantasies AGA
 #   Sensible World of Soccer 96/97
 NESTED_WIDTH=640
-NESTED_HEIGHT=270
+NESTED_HEIGHT=480
 
-CROP_X=40
-CROP_Y=9
 
 GAMESCOPE_PID=""
 AMIBERRY_PID=""
@@ -139,9 +137,9 @@ case "$SHADER" in
         INCLUDE_DIR="$ROOT/assets/shaders/barecrt"
         DECLARATION="barecrt = $SHADER_FILE"
         SETTINGS="$(printf '%s\n' \
-            'BareFrontScale = 4.0' \
-            'BareFrontSourceScaleX = 3.0' \
-            'BareFrontSourceScaleY = 4.0')"
+            'BareFrontScale = 2.0' \
+            'BareFrontSourceScaleX = 2.0' \
+            'BareFrontSourceScaleY = 2.0')"
         ;;
 
     CRT-LITE)
@@ -158,7 +156,7 @@ case "$SHADER" in
         SHADER_FILE="$INCLUDE_DIR/CRT_Lottes.fx"
         DECLARATION="CRT_Lottes = $SHADER_FILE"
         SETTINGS="$(printf '%s\n' \
-            'fDownscale = 4.0' \
+            'fDownscale = 2.0' \
             'fBlur = 2.6')"
         ;;
 
@@ -189,11 +187,6 @@ if [[ -n "$SETTINGS" ]]; then
     printf '%s\n' "$SETTINGS"
 fi
 
-if [[ "$MODE" == "--dry-run" ]]; then
-    echo "PASS: Dry run only — no display changes or game launch."
-    exit 0
-fi
-
 # ------------------------------------------------------------
 # BareFront-isolated Amiberry profile
 # ------------------------------------------------------------
@@ -207,12 +200,187 @@ export AMIBERRY_HOME_DIR="$PROFILE/home"
 export XDG_CONFIG_HOME="$PROFILE/xdg-config"
 export XDG_DATA_HOME="$PROFILE/xdg-data"
 
+# ------------------------------------------------------------
+# Resolve BareFront Amiga media.
+#
 # WHDLoad archives use Amiberry's autoload path.
-# Other supported media continues to use the normal media path.
+#
+# BareFront's canonical Amiga multidisc format is .m3u.
+# Amiberry does not launch .m3u directly, so BareFront:
+#
+#   1. validates the ordered relative floppy paths
+#   2. inserts the first disk into DF0
+#   3. preloads the complete ordered set into Amiberry's
+#      native Disk Swapper
+#
+# Disk changes remain native Amiberry operations.
+# ------------------------------------------------------------
+
+AMIGA_DISK_COUNT=0
+
 if [[ "${ROM,,}" == *.lha ]]; then
+
     MEDIA_ARGS=(--autoload "$ROM")
+
+elif [[ "${ROM,,}" == *.m3u ]]; then
+
+    PLAYLIST_OUTPUT="$(mktemp)"
+
+    if ! python3 - "$ROM" > "$PLAYLIST_OUTPUT" <<'PY_M3U'
+from pathlib import Path
+import re
+import sys
+
+playlist = Path(sys.argv[1]).resolve()
+
+if not playlist.is_file():
+    raise SystemExit(
+        f"STOP: Amiga playlist not found: {playlist}"
+    )
+
+base = playlist.parent.resolve()
+media = []
+
+for number, raw in enumerate(
+    playlist.read_text(
+        encoding="utf-8-sig"
+    ).splitlines(),
+    start=1
+):
+    entry = raw.strip()
+
+    if not entry or entry.startswith("#"):
+        continue
+
+    def reject(reason):
+        raise SystemExit(
+            f"STOP: Invalid Amiga playlist line "
+            f"{number}: {reason}: {raw!r}"
+        )
+
+    if "\x00" in entry:
+        reject("NUL character")
+
+    if "\\" in entry:
+        reject("backslash path separator")
+
+    if re.match(r"^[A-Za-z]:", entry):
+        reject("Windows absolute path")
+
+    path = Path(entry)
+
+    if path.is_absolute():
+        reject("absolute path")
+
+    if ".." in path.parts:
+        reject("parent-directory traversal")
+
+    candidate = (base / path).resolve()
+
+    try:
+        candidate.relative_to(base)
+    except ValueError:
+        reject("media resolves outside game directory")
+
+    if candidate == playlist:
+        reject("playlist references itself")
+
+    if not candidate.is_file():
+        reject("referenced media does not exist")
+
+    extension = candidate.suffix.lower()
+
+    # Conservative floppy-only multidisc contract.
+    if extension not in {
+        ".adf",
+        ".adz",
+        ".dms",
+        ".ipf",
+    }:
+        reject(
+            f"unsupported floppy media type "
+            f"{extension!r}"
+        )
+
+    media.append(candidate)
+
+if len(media) < 2:
+    raise SystemExit(
+        "STOP: Amiga multidisc playlist must "
+        "contain at least two disks"
+    )
+
+for candidate in media:
+    print(candidate)
+PY_M3U
+    then
+        rm -f -- "$PLAYLIST_OUTPUT"
+        exit 1
+    fi
+
+    mapfile -t AMIGA_DISKS < "$PLAYLIST_OUTPUT"
+    rm -f -- "$PLAYLIST_OUTPUT"
+
+    AMIGA_DISK_COUNT="${#AMIGA_DISKS[@]}"
+
+    if (( AMIGA_DISK_COUNT < 2 )); then
+        echo \
+            "STOP: Amiga playlist resolved fewer than two disks." \
+            >&2
+        exit 1
+    fi
+
+    DISKSWAPPER_LIST=""
+
+    for disk in "${AMIGA_DISKS[@]}"; do
+
+        entry="$disk"
+
+        if [[ "$entry" == *'"'* ]]; then
+            echo \
+                "STOP: Double quote in Amiga floppy filename is unsupported." \
+                >&2
+            exit 1
+        fi
+
+        # Amiberry documents quoted individual paths when
+        # filenames themselves contain commas.
+        if [[ "$entry" == *,* ]]; then
+            entry="\"$entry\""
+        fi
+
+        if [[ -n "$DISKSWAPPER_LIST" ]]; then
+            DISKSWAPPER_LIST+=","
+        fi
+
+        DISKSWAPPER_LIST+="$entry"
+    done
+
+    MEDIA_ARGS=(
+        -0 "${AMIGA_DISKS[0]}"
+        "-diskswapper=$DISKSWAPPER_LIST"
+    )
+
+    echo "Amiga multidisc playlist:"
+    echo "  Disks: $AMIGA_DISK_COUNT"
+    echo "  DF0:   ${AMIGA_DISKS[0]}"
+
+    for index in "${!AMIGA_DISKS[@]}"; do
+        printf \
+            '  Slot %d: %s\n' \
+            "$index" \
+            "${AMIGA_DISKS[$index]}"
+    done
+
 else
+
     MEDIA_ARGS=("$ROM")
+
+fi
+
+if [[ "$MODE" == "--dry-run" ]]; then
+    echo "PASS: Dry run only — media resolved, no display changes or game launch."
+    exit 0
 fi
 
 # ------------------------------------------------------------
@@ -409,12 +577,12 @@ rm -f "$IPC_SOCKET" "$PROBE"
 # Amiberry:
 #   native emulation
 #   nearest
-#   no auto crop
-#   manual 640x270 crop
+#   automatic content crop
+#   fixed 640x480 presentation canvas
 #
 # Gamescope:
 #   1920x1080
-#   exact 3x horizontal / 4x vertical mapping
+#   exact 2x integer scaling to 1280x960
 #   nearest neighbour
 #
 # vkBasalt:
@@ -430,7 +598,7 @@ rm -f "$IPC_SOCKET" "$PROBE"
         -h "$NESTED_HEIGHT" \
         -W "$OUTPUT_WIDTH" \
         -H "$OUTPUT_HEIGHT" \
-        -S stretch \
+        -S integer \
         -F nearest \
         -- \
         env \
@@ -440,15 +608,13 @@ rm -f "$IPC_SOCKET" "$PROBE"
             SDL_VIDEODRIVER=x11 \
             "$AMIBERRY" \
                 -o "amiberry_config=$CONF" \
+                -o "default_vkbd_enabled=yes" \
+                -o "default_vkbd_toggle=F11" \
                 --rescan-roms \
                 "${MEDIA_ARGS[@]}" \
-                -s "amiberry.gfx_correct_aspect=0" \
-                -s "amiberry.gfx_auto_crop=false" \
-                -s "amiberry.gfx_manual_crop=true" \
-                -s "amiberry.gfx_manual_crop_width=$NESTED_WIDTH" \
-                -s "amiberry.gfx_manual_crop_height=$NESTED_HEIGHT" \
-                -s "amiberry.gfx_horizontal_offset=$CROP_X" \
-                -s "amiberry.gfx_vertical_offset=$CROP_Y" \
+                -s "amiberry.gfx_correct_aspect=1" \
+                -s "amiberry.gfx_auto_crop=true" \
+                -s "amiberry.gfx_manual_crop=false" \
                 -G &
 
 GAMESCOPE_PID=$!
@@ -524,7 +690,8 @@ fi
 env DISPLAY="$AMIBERRY_DISPLAY" \
     "$ESC_HELPER" \
         "$AMIBERRY_PID" \
-        "$IPC_SOCKET" &
+        "$IPC_SOCKET" \
+        "$AMIGA_DISK_COUNT" &
 
 ESC_HELPER_PID=$!
 
@@ -582,8 +749,8 @@ source_height = int(fields["source_height"])
 
 send(
     "SET_WINDOW_SIZE",
-    str(source_width),
-    str(source_height)
+    "640",
+    "480"
 )
 
 time.sleep(1)

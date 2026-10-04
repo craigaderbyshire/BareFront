@@ -2,6 +2,7 @@
 #include <X11/XKBlib.h>
 #include <X11/keysym.h>
 #include <X11/extensions/XInput2.h>
+#include <X11/extensions/XTest.h>
 #include <SDL.h>
 
 #include <cerrno>
@@ -21,6 +22,235 @@ namespace
 {
 
 constexpr Uint64 GUIDE_HOLD_MS = 1500;
+
+bool sendIpcCommand(
+    const std::string& socketPath,
+    const std::string& command,
+    std::string& response
+)
+{
+    sockaddr_un address{};
+
+    if (socketPath.size() >= sizeof(address.sun_path)) {
+        std::cerr
+            << "Amiberry IPC socket path is too long\n";
+        return false;
+    }
+
+    const int socketFd =
+        socket(
+            AF_UNIX,
+            SOCK_STREAM,
+            0
+        );
+
+    if (socketFd < 0) {
+        perror(
+            "Unable to create Amiberry IPC socket"
+        );
+        return false;
+    }
+
+    address.sun_family = AF_UNIX;
+
+    std::memcpy(
+        address.sun_path,
+        socketPath.c_str(),
+        socketPath.size() + 1
+    );
+
+    if (connect(
+            socketFd,
+            reinterpret_cast<sockaddr*>(
+                &address
+            ),
+            sizeof(address)
+        ) != 0) {
+
+        perror(
+            "Unable to connect to Amiberry IPC socket"
+        );
+
+        close(socketFd);
+
+        return false;
+    }
+
+    const std::string payload =
+        command + "\n";
+
+    const ssize_t sent =
+        send(
+            socketFd,
+            payload.data(),
+            payload.size(),
+            MSG_NOSIGNAL
+        );
+
+    if (
+        sent !=
+        static_cast<ssize_t>(
+            payload.size()
+        )
+    ) {
+
+        std::cerr
+            << "Unable to send Amiberry IPC command: "
+            << command
+            << "\n";
+
+        close(socketFd);
+
+        return false;
+    }
+
+    response.clear();
+
+    char buffer[512];
+
+    while (
+        response.find('\n') ==
+        std::string::npos
+    ) {
+
+        const ssize_t received =
+            recv(
+                socketFd,
+                buffer,
+                sizeof(buffer),
+                0
+            );
+
+        if (received <= 0) {
+            break;
+        }
+
+        response.append(
+            buffer,
+            static_cast<std::size_t>(
+                received
+            )
+        );
+
+        if (response.size() > 4096) {
+            break;
+        }
+    }
+
+    close(socketFd);
+
+    while (
+        !response.empty() &&
+        (
+            response.back() == '\n' ||
+            response.back() == '\r'
+        )
+    ) {
+        response.pop_back();
+    }
+
+    return
+        response.rfind(
+            "OK",
+            0
+        ) == 0;
+}
+
+
+int queryDiskSlot(
+    const std::string& socketPath
+)
+{
+    std::string response;
+
+    if (!sendIpcCommand(
+            socketPath,
+            "QUERYDISKSWAP\t0",
+            response
+        )) {
+
+        std::cerr
+            << "Amiberry QUERYDISKSWAP failed\n";
+
+        return -1;
+    }
+
+    const std::size_t separator =
+        response.find('\t');
+
+    if (separator == std::string::npos) {
+        return -1;
+    }
+
+    try {
+        return std::stoi(
+            response.substr(
+                separator + 1
+            )
+        );
+    }
+    catch (...) {
+        return -1;
+    }
+}
+
+
+bool swapDisk(
+    const std::string& socketPath,
+    const int slot
+)
+{
+    std::string response;
+
+    return sendIpcCommand(
+        socketPath,
+        "DISKSWAP\t" +
+            std::to_string(slot) +
+            "\t0",
+        response
+    );
+}
+
+
+bool toggleVirtualKeyboard(
+    Display* display
+)
+{
+    const KeyCode keycode =
+        XKeysymToKeycode(
+            display,
+            XK_F11
+        );
+
+    if (keycode == 0) {
+        std::cerr
+            << "Unable to resolve F11 keycode\n";
+
+        return false;
+    }
+
+    if (!XTestFakeKeyEvent(
+            display,
+            keycode,
+            True,
+            CurrentTime
+        )) {
+        return false;
+    }
+
+    if (!XTestFakeKeyEvent(
+            display,
+            keycode,
+            False,
+            CurrentTime
+        )) {
+        return false;
+    }
+
+    XFlush(display);
+
+    return true;
+}
 
 bool requestQuit(const std::string& socketPath)
 {
@@ -80,9 +310,9 @@ bool requestQuit(const std::string& socketPath)
 
 int main(int argc, char* argv[])
 {
-    if (argc != 3) {
+    if (argc != 3 && argc != 4) {
         std::cerr
-            << "Usage: amiberry_esc_helper <pid> <socket-path>\n";
+            << "Usage: amiberry_esc_helper <pid> <socket-path> [disk-count]\\n";
         return 1;
     }
 
@@ -100,6 +330,39 @@ int main(int argc, char* argv[])
 
     const std::string socketPath =
         argv[2];
+
+
+    int diskCount = 0;
+
+    if (argc == 4) {
+
+        char* diskEnd = nullptr;
+
+        const long parsedDiskCount =
+            std::strtol(
+                argv[3],
+                &diskEnd,
+                10
+            );
+
+        if (
+            !diskEnd ||
+            *diskEnd != '\0' ||
+            parsedDiskCount < 0 ||
+            parsedDiskCount > 100
+        ) {
+
+            std::cerr
+                << "Invalid Amiga disk count\n";
+
+            return 1;
+        }
+
+        diskCount =
+            static_cast<int>(
+                parsedDiskCount
+            );
+    }
 
     Display* display =
         XOpenDisplay(nullptr);
@@ -244,6 +507,144 @@ int main(int argc, char* argv[])
                 }
 
                 continue;
+            }
+
+
+            // BareFront Amiga controller chords.
+            //
+            // Guide remains reserved for BareFront exit.
+            //
+            // LB+RB+B = Amiberry on-screen keyboard
+            // LB+RB+Y = next floppy
+            // LB+RB+X = previous floppy
+            if (
+                sdlEvent.type ==
+                    SDL_CONTROLLERBUTTONDOWN &&
+                (
+                    sdlEvent.cbutton.button ==
+                        SDL_CONTROLLER_BUTTON_B ||
+                    sdlEvent.cbutton.button ==
+                        SDL_CONTROLLER_BUTTON_X ||
+                    sdlEvent.cbutton.button ==
+                        SDL_CONTROLLER_BUTTON_Y
+                )
+            ) {
+
+                SDL_GameController* controller =
+                    SDL_GameControllerFromInstanceID(
+                        sdlEvent.cbutton.which
+                    );
+
+                if (controller) {
+
+                    const bool leftShoulder =
+                        SDL_GameControllerGetButton(
+                            controller,
+                            SDL_CONTROLLER_BUTTON_LEFTSHOULDER
+                        );
+
+                    const bool rightShoulder =
+                        SDL_GameControllerGetButton(
+                            controller,
+                            SDL_CONTROLLER_BUTTON_RIGHTSHOULDER
+                        );
+
+                    if (
+                        leftShoulder &&
+                        rightShoulder
+                    ) {
+
+                        if (
+                            sdlEvent.cbutton.button ==
+                            SDL_CONTROLLER_BUTTON_B
+                        ) {
+
+                            if (
+                                toggleVirtualKeyboard(
+                                    display
+                                )
+                            ) {
+
+                                std::cout
+                                    << "On-screen keyboard "
+                                    << "toggle sent\n";
+                            }
+                            else {
+
+                                std::cerr
+                                    << "On-screen keyboard "
+                                    << "toggle failed\n";
+                            }
+
+                            continue;
+                        }
+
+                        if (diskCount > 1) {
+
+                            int current =
+                                queryDiskSlot(
+                                    socketPath
+                                );
+
+                            if (
+                                current < 0 ||
+                                current >= diskCount
+                            ) {
+
+                                // BareFront boots Disc 1
+                                // into DF0.
+                                current = 0;
+                            }
+
+                            int target =
+                                current;
+
+                            if (
+                                sdlEvent.cbutton.button ==
+                                SDL_CONTROLLER_BUTTON_Y
+                            ) {
+
+                                target =
+                                    (
+                                        current + 1
+                                    ) %
+                                    diskCount;
+                            }
+                            else {
+
+                                target =
+                                    (
+                                        current - 1 +
+                                        diskCount
+                                    ) %
+                                    diskCount;
+                            }
+
+                            if (
+                                swapDisk(
+                                    socketPath,
+                                    target
+                                )
+                            ) {
+
+                                std::cout
+                                    << "Amiberry disk swap: "
+                                    << current
+                                    << " -> "
+                                    << target
+                                    << "\n";
+                            }
+                            else {
+
+                                std::cerr
+                                    << "Amiberry disk swap "
+                                    << "failed\n";
+                            }
+
+                            continue;
+                        }
+                    }
+                }
             }
 
             // Physical Xbox-logo button on the M7 arrives
