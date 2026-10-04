@@ -6940,6 +6940,7 @@ VKBASALT_CONFIG="/tmp/barefront-vkbasalt-c64.conf"
 GAMESCOPE_PID=""
 PANELS_HIDDEN=0
 C64_TEXTURE_DIR=""
+C64_TEMP_DIR=""
 C64_TEMP_VFL=""
 
 DISPLAY_OUTPUT=""
@@ -7192,7 +7193,9 @@ cleanup()
         rm -rf -- "$C64_TEXTURE_DIR"
     fi
 
-    if [[ -n "$C64_TEMP_VFL" ]]; then
+    if [[ -n "$C64_TEMP_DIR" ]]; then
+        rm -rf -- "$C64_TEMP_DIR"
+    elif [[ -n "$C64_TEMP_VFL" ]]; then
         rm -f -- "$C64_TEMP_VFL"
     fi
 
@@ -7458,11 +7461,18 @@ VICE_ARGS=(
 #
 # For .m3u:
 #   - validate ordered relative media paths
-#   - generate a hidden VICE fliplist beside the playlist
+#   - create a private writable workspace in /tmp
+#   - symlink the validated media into that workspace while
+#     preserving their relative paths
+#   - generate VICE's native fliplist inside the workspace
 #   - use CRLF separators with no final line terminator,
 #     matching the already-proven native VICE fliplist format
-#   - remove the generated fliplist during normal launcher
-#     cleanup before control returns to BareFront
+#   - remove the whole workspace during normal launcher cleanup
+#     before control returns to BareFront
+#
+# This deliberately avoids writing beside the source playlist,
+# allowing ROM libraries to live on read-only local, USB or
+# network storage.
 #
 # Direct .vfl launching remains supported for compatibility,
 # but .vfl is an implementation detail rather than BareFront's
@@ -7476,12 +7486,12 @@ FLIPLIST=""
 
 if [[ "$ROM_EXTENSION" == "m3u" ]]; then
 
-    C64_TEMP_VFL="$(
-        mktemp \
-            "$(dirname "$ROM")/.barefront-vice.XXXXXX.vfl"
-    )"
+    C64_TEMP_DIR="$(mktemp -d /tmp/barefront-vice.XXXXXX)"
+    C64_TEMP_VFL="$C64_TEMP_DIR/playlist.vfl"
 
-    python3 - "$ROM" "$C64_TEMP_VFL" <<'PY_M3U'
+    python3 \
+        - "$ROM" "$C64_TEMP_VFL" "$C64_TEMP_DIR" \
+        <<'PY_M3U'
 import os
 import re
 import sys
@@ -7489,6 +7499,14 @@ from pathlib import Path
 
 supplied = Path(sys.argv[1])
 output = Path(sys.argv[2])
+
+try:
+    workspace = Path(sys.argv[3]).resolve(strict=True)
+except FileNotFoundError:
+    raise SystemExit("Cannot resolve C64 temporary workspace")
+
+if not workspace.is_dir():
+    raise SystemExit("C64 temporary workspace is not a directory")
 
 absolute_playlist = supplied.absolute()
 
@@ -7572,16 +7590,32 @@ with handle:
         seen.add(resolved)
 
         # Preserve the playlist's relative media spelling/order.
-        # The generated VFL deliberately lives beside the M3U,
-        # so VICE resolves these paths exactly as intended.
-        media.append(relative.as_posix())
+        # VICE will resolve these names inside the private
+        # workspace rather than writing anything into the source
+        # ROM library.
+        media.append(
+            (
+                relative.as_posix(),
+                resolved,
+            )
+        )
 
 if not media:
     raise SystemExit("Playlist contains no media")
 
+for relative_name, resolved in media:
+    link = workspace / Path(relative_name)
+
+    link.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    link.symlink_to(resolved)
+
 lines = [
     "; Vice fliplist file",
-    *media,
+    *(relative_name for relative_name, _ in media),
 ]
 
 # Proven VICE representation:
