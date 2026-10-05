@@ -28,7 +28,10 @@
 
 #include <csignal>
 #include <fcntl.h>
+#include <linux/magic.h>
+#include <sys/statvfs.h>
 #include <sys/types.h>
+#include <sys/vfs.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -4136,6 +4139,64 @@ fs::path findMountedExternalContentSource()
 }
 
 
+bool networkContentSourceAvailable(
+    const fs::path& root)
+{
+    if (!bfcontent::validSource(root))
+    {
+        return false;
+    }
+
+    // Explicit Network-root overrides are used by isolated
+    // regression tests. Production discovery must prove that
+    // the source is on a read-only CIFS filesystem.
+    if (const char* overrideRoot =
+            std::getenv(
+                "BAREFRONT_CONTENT_NETWORK_ROOT"
+            );
+        overrideRoot &&
+        *overrideRoot)
+    {
+        return true;
+    }
+
+    struct statfs filesystemInfo
+    {
+    };
+
+    if (statfs(
+            root.c_str(),
+            &filesystemInfo) != 0)
+    {
+        return false;
+    }
+
+    struct statvfs mountInfo
+    {
+    };
+
+    if (statvfs(
+            root.c_str(),
+            &mountInfo) != 0)
+    {
+        return false;
+    }
+
+    const bool isCifs =
+        filesystemInfo.f_type ==
+            CIFS_SUPER_MAGIC ||
+        filesystemInfo.f_type ==
+            SMB2_SUPER_MAGIC;
+
+    const bool isReadOnly =
+        (mountInfo.f_flag &
+         ST_RDONLY) != 0;
+
+    return isCifs &&
+           isReadOnly;
+}
+
+
 std::vector<ContentSourceStatus>
 discoverContentSources(
     const fs::path& barefrontRoot)
@@ -4764,7 +4825,7 @@ bool runContentSourcePreflight(
                 sources.size() > 2)
             {
                 sources[2].available =
-                    bfcontent::validSource(
+                    networkContentSourceAvailable(
                         sources[2].source.root
                     );
             }

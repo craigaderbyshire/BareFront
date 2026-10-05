@@ -588,6 +588,8 @@ network_managed_entry_valid()
         -v end="$NETWORK_FSTAB_END" \
         -v mountpoint="$NETWORK_MOUNTPOINT" \
         -v credentials="$NETWORK_CREDENTIALS" \
+        -v uid="$NETWORK_UID" \
+        -v gid="$NETWORK_GID" \
         '
         $0 == begin {
             inside = 1
@@ -599,7 +601,8 @@ network_managed_entry_valid()
             next
         }
 
-        inside && NF >= 4 &&
+        inside &&
+        NF >= 4 &&
         $2 == mountpoint &&
         $3 == "cifs" {
             delete option
@@ -611,14 +614,36 @@ network_managed_entry_valid()
             }
 
             credentials_option = "credentials=" credentials
+            uid_option = "uid=" uid
+            gid_option = "gid=" gid
 
-            if (option["ro"] && option["noauto"] && option["user"] && option["_netdev"] && option[credentials_option]) {
-                found = 1
+            matching_entries++
+
+            if (option["ro"] &&
+                !option["rw"] &&
+                option["noauto"] &&
+                !option["auto"] &&
+                option["user"] &&
+                !option["nouser"] &&
+                option["_netdev"] &&
+                option[credentials_option] &&
+                option[uid_option] &&
+                option[gid_option] &&
+                option["vers=3.0"] &&
+                option["cache=strict"] &&
+                option["nosuid"] &&
+                !option["suid"] &&
+                option["nodev"] &&
+                !option["dev"] &&
+                option["noexec"] &&
+                !option["exec"]) {
+                safe_entries++
             }
         }
 
         END {
-            exit(found ? 0 : 1)
+            exit(matching_entries == 1 &&
+                 safe_entries == 1 ? 0 : 1)
         }
         ' \
         "$NETWORK_FSTAB"

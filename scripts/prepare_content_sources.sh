@@ -18,16 +18,24 @@ set -uo pipefail
 
 
 NETWORK_MOUNTPOINT="${BAREFRONT_NETWORK_MOUNTPOINT:-/mnt/barefront-network}"
+NETWORK_CONFIG_DIR="${BAREFRONT_NETWORK_CONFIG_DIR:-/etc/barefront}"
+NETWORK_CREDENTIALS="${BAREFRONT_NETWORK_CREDENTIALS:-$NETWORK_CONFIG_DIR/network.credentials}"
 FSTAB_FILE="${BAREFRONT_FSTAB:-/etc/fstab}"
+
+NETWORK_FSTAB_BEGIN="# BEGIN BAREFRONT NETWORK CONTENT"
+NETWORK_FSTAB_END="# END BAREFRONT NETWORK CONTENT"
 
 MOUNT_COMMAND="${BAREFRONT_MOUNT_COMMAND:-/usr/bin/mount}"
 MOUNTPOINT_COMMAND="${BAREFRONT_MOUNTPOINT_COMMAND:-/usr/bin/mountpoint}"
+FINDMNT_COMMAND="${BAREFRONT_FINDMNT_COMMAND:-/usr/bin/findmnt}"
 UDISKSCTL_COMMAND="${BAREFRONT_UDISKSCTL_COMMAND:-/usr/bin/udisksctl}"
 LSBLK_COMMAND="${BAREFRONT_LSBLK_COMMAND:-/usr/bin/lsblk}"
 PYTHON_COMMAND="${BAREFRONT_PYTHON_COMMAND:-/usr/bin/python3}"
 TIMEOUT_COMMAND="${BAREFRONT_TIMEOUT_COMMAND:-/usr/bin/timeout}"
 
 CURRENT_USER="${USER:-$(id -un)}"
+CURRENT_UID="$(id -u)"
+CURRENT_GID="$(id -g)"
 
 NETWORK_TIMEOUT_SECONDS="${BAREFRONT_NETWORK_TIMEOUT_SECONDS:-5}"
 EXTERNAL_TIMEOUT_SECONDS="${BAREFRONT_EXTERNAL_TIMEOUT_SECONDS:-8}"
@@ -188,25 +196,70 @@ network_is_configured()
     [[ -f "$FSTAB_FILE" ]] || return 1
 
     awk \
+        -v begin="$NETWORK_FSTAB_BEGIN" \
+        -v end="$NETWORK_FSTAB_END" \
         -v mountpoint="$NETWORK_MOUNTPOINT" \
+        -v credentials="$NETWORK_CREDENTIALS" \
+        -v uid="$CURRENT_UID" \
+        -v gid="$CURRENT_GID" \
         '
-        /^[[:space:]]*#/ {
+        $0 == begin {
+            inside = 1
             next
         }
 
-        NF >= 3 &&
+        $0 == end {
+            inside = 0
+            next
+        }
+
+        inside &&
+        NF >= 4 &&
         $2 == mountpoint &&
         $3 == "cifs" {
-            found = 1
+            delete option
+
+            count = split($4, values, ",")
+
+            for (i = 1; i <= count; ++i) {
+                option[values[i]] = 1
+            }
+
+            credentials_option = "credentials=" credentials
+            uid_option = "uid=" uid
+            gid_option = "gid=" gid
+
+            matching_entries++
+
+            if (option["ro"] &&
+                !option["rw"] &&
+                option["noauto"] &&
+                !option["auto"] &&
+                option["user"] &&
+                !option["nouser"] &&
+                option["_netdev"] &&
+                option[credentials_option] &&
+                option[uid_option] &&
+                option[gid_option] &&
+                option["vers=3.0"] &&
+                option["cache=strict"] &&
+                option["nosuid"] &&
+                !option["suid"] &&
+                option["nodev"] &&
+                !option["dev"] &&
+                option["noexec"] &&
+                !option["exec"]) {
+                safe_entries++
+            }
         }
 
         END {
-            exit(found ? 0 : 1)
+            exit(matching_entries == 1 &&
+                 safe_entries == 1 ? 0 : 1)
         }
         ' \
         "$FSTAB_FILE"
 }
-
 
 network_is_mounted()
 {
@@ -219,6 +272,42 @@ network_is_mounted()
 }
 
 
+network_live_mount_safe()
+{
+    [[ -x "$FINDMNT_COMMAND" ]] || return 1
+
+    local details
+    local filesystem
+    local options
+
+    details="$(
+        "$FINDMNT_COMMAND" \
+            --noheadings \
+            --raw \
+            --mountpoint "$NETWORK_MOUNTPOINT" \
+            --output FSTYPE,OPTIONS \
+            2>/dev/null
+    )" || return 1
+
+    [[ -n "$details" ]] || return 1
+
+    read -r filesystem options <<< "$details"
+
+    [[ "$filesystem" == "cifs" ]] || return 1
+
+    case ",$options," in
+        *,ro,*) ;;
+        *) return 1 ;;
+    esac
+
+    case ",$options," in
+        *,rw,*) return 1 ;;
+    esac
+
+    return 0
+}
+
+
 prepare_network()
 {
     if ! network_is_configured; then
@@ -227,10 +316,11 @@ prepare_network()
     fi
 
     if network_is_mounted; then
-        if valid_source_root "$NETWORK_MOUNTPOINT/barefront"; then
+        if network_live_mount_safe &&
+           valid_source_root "$NETWORK_MOUNTPOINT/barefront"; then
             echo "Network Share: ready"
         else
-            echo "Network Share: mounted but invalid"
+            echo "Network Share: mounted but unsafe or invalid"
         fi
 
         return 0
@@ -256,10 +346,11 @@ prepare_network()
         true
 
     if network_is_mounted &&
+       network_live_mount_safe &&
        valid_source_root "$NETWORK_MOUNTPOINT/barefront"; then
         echo "Network Share: ready"
     else
-        echo "Network Share: unavailable"
+        echo "Network Share: unavailable or unsafe"
     fi
 }
 
