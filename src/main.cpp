@@ -8891,10 +8891,14 @@ switch (action)
             }
             else if (screenshotTexture)
             {
-                drawTextureContained(
+                // Game preview screenshots follow the same
+                // presentation rule as video: fill the CRT
+                // opening edge-to-edge with no letterboxing.
+                SDL_RenderCopy(
                     renderer,
                     screenshotTexture,
-                    screenArea
+                    nullptr,
+                    &screenArea
                 );
             }
             else
