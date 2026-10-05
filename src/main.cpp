@@ -9077,20 +9077,20 @@ switch (action)
             SDL_RenderFillRect(renderer, &footerMask);
 
             // The popup itself must be fully opaque.
-            SDL_Rect panel = {180, 120, 920, 480};
+            SDL_Rect panel = {140, 120, 1000, 480};
             SDL_SetRenderDrawColor(renderer, 25, 25, 25, 255);
             SDL_RenderFillRect(renderer, &panel);
 
             SDL_SetRenderDrawColor(renderer, 125, 125, 125, 255);
             SDL_RenderDrawRect(renderer, &panel);
 
-            SDL_Rect heading = {205, 145, 870, 55};
+            SDL_Rect heading = {165, 145, 950, 55};
             drawTextCentered(
                 renderer, gameTitleFont,
                 "SHADER PRESET", heading, white
             );
 
-            SDL_Rect systemHeading = {205, 205, 870, 35};
+            SDL_Rect systemHeading = {165, 205, 950, 35};
             drawTextCentered(
                 renderer, gameFont,
                 systems[activeSystemIndex].screenTitle,
@@ -9103,9 +9103,9 @@ switch (action)
             {
                 SDL_Rect option =
                 {
-                    220,
+                    180,
                     260 + static_cast<int>(index) * 68,
-                    840,
+                    920,
                     60
                 };
 
@@ -9125,7 +9125,7 @@ switch (action)
 
             if (shaderMenuSaveFailed)
             {
-                SDL_Rect errorArea = {205, 540, 870, 35};
+                SDL_Rect errorArea = {165, 540, 950, 35};
 
                 drawTextCentered(
                     renderer, gameFont,
@@ -9135,8 +9135,8 @@ switch (action)
             }
             else
             {
-                SDL_Rect selectArea = {215, 540, 420, 35};
-                SDL_Rect cancelArea = {645, 540, 420, 35};
+                SDL_Rect selectArea = {165, 540, 460, 35};
+                SDL_Rect cancelArea = {655, 540, 460, 35};
 
                 drawTextCentered(
                     renderer, gameFont,
