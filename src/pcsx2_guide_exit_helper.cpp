@@ -60,7 +60,7 @@ int main()
     openControllers();
 
     std::cout
-        << "PCSX2 Guide helper active. DISPLAY="
+        << "PCSX2 Share helper active. DISPLAY="
         << (std::getenv("DISPLAY")
                 ? std::getenv("DISPLAY")
                 : "unset")
@@ -147,7 +147,7 @@ int main()
                 {
                     guideDown[id] = SDL_GetTicks64();
 
-                    std::cout << "Xbox Guide pressed\n";
+                    std::cout << "Xbox Share pressed\n";
                     std::cout.flush();
                 }
             }
@@ -158,7 +158,7 @@ int main()
             {
                 guideDown.erase(event.cbutton.which);
 
-                std::cout << "Xbox Guide released\n";
+                std::cout << "Xbox Share released\n";
                 std::cout.flush();
             }
             else if (
@@ -266,7 +266,7 @@ int main()
             const SDL_JoystickID id = held->first;
 
             std::cout
-                << "Guide held 1500 ms — sending Escape to PCSX2\n";
+                << "Share held 1500 ms — sending Escape to PCSX2\n";
             std::cout.flush();
 
             Display* display = XOpenDisplay(nullptr);

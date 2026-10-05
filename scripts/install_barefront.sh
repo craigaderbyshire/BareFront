@@ -2933,28 +2933,28 @@ echo
 mkdir -p "$PCSX2_DIR"
 
 # ------------------------------------------------------------
-# PCSX2 Xbox Guide exit helper
+# PCSX2 Xbox Share exit helper
 # ------------------------------------------------------------
 
 PCSX2_GUIDE_SOURCE="$BAREFRONT_DIR/src/pcsx2_guide_exit_helper.cpp"
 PCSX2_GUIDE_HELPER="$PCSX2_DIR/pcsx2_guide_exit_helper"
 
 if [[ ! -f "$PCSX2_GUIDE_SOURCE" ]]; then
-    die "PCSX2 Guide helper source is missing."
+    die "PCSX2 Share helper source is missing."
 fi
 
 if ! command -v g++ >/dev/null 2>&1 ||
    ! command -v pkg-config >/dev/null 2>&1 ||
    ! pkg-config --exists sdl2 x11 xtst
 then
-    die "PCSX2 Guide helper build dependencies are missing."
+    die "PCSX2 Share helper build dependencies are missing."
 fi
 
 if [[ ! -x "$PCSX2_GUIDE_HELPER" ]] ||
    [[ "$PCSX2_GUIDE_SOURCE" -nt "$PCSX2_GUIDE_HELPER" ]]
 then
     echo
-    echo "Building PCSX2 Xbox Guide helper..."
+    echo "Building PCSX2 Xbox Share helper..."
 
     PCSX2_GUIDE_TEMP="$(mktemp "$PCSX2_DIR/.pcsx2-guide.XXXXXX")"
 
@@ -2964,16 +2964,27 @@ then
         $(pkg-config --cflags --libs sdl2 x11 xtst)
     then
         rm -f -- "$PCSX2_GUIDE_TEMP"
-        die "PCSX2 Guide helper compilation failed."
+        die "PCSX2 Share helper compilation failed."
     fi
 
     chmod 0755 "$PCSX2_GUIDE_TEMP"
-    mv -f -- "$PCSX2_GUIDE_TEMP" "$PCSX2_GUIDE_HELPER"
 
-    echo "PCSX2 Xbox Guide helper built."
+    if ! mv -fT -- "$PCSX2_GUIDE_TEMP" "$PCSX2_GUIDE_HELPER"; then
+        rm -f -- "$PCSX2_GUIDE_TEMP"
+        die "Could not promote the PCSX2 Share helper."
+    fi
+
+    echo "PCSX2 Xbox Share helper built."
 else
-    echo "PCSX2 Xbox Guide helper already built."
+    echo "PCSX2 Xbox Share helper already built."
 fi
+
+if [[ ! -f "$PCSX2_GUIDE_HELPER" ||
+      ! -x "$PCSX2_GUIDE_HELPER" ]]; then
+    die "PCSX2 Share helper verification failed."
+fi
+
+echo "  PCSX2 Share helper: OK"
 
 NEED_PCSX2_INSTALL=1
 
@@ -3057,7 +3068,32 @@ if [[ "$NEED_PCSX2_INSTALL" -eq 1 ]]; then
         die "Downloaded PCSX2 file does not look executable."
     fi
 
-    install -m 0755 "$TEMP_DOWNLOAD" "$PCSX2_EXE"
+    PCSX2_INSTALL_CANDIDATE="$(
+        mktemp "$PCSX2_DIR/.PCSX2-install.XXXXXX"
+    )"
+
+    if ! install -m 0755 "$TEMP_DOWNLOAD" "$PCSX2_INSTALL_CANDIDATE"; then
+        rm -f -- "$PCSX2_INSTALL_CANDIDATE"
+        rm -rf "$TEMP_DIR"
+        die "Could not stage the pinned PCSX2 AppImage."
+    fi
+
+    PCSX2_CANDIDATE_SHA256="$(
+        sha256sum "$PCSX2_INSTALL_CANDIDATE" |
+            awk '{print $1}'
+    )"
+
+    if [[ "$PCSX2_CANDIDATE_SHA256" != "$PCSX2_SHA256" ]]; then
+        rm -f -- "$PCSX2_INSTALL_CANDIDATE"
+        rm -rf "$TEMP_DIR"
+        die "Staged PCSX2 AppImage failed SHA-256 verification."
+    fi
+
+    if ! mv -fT "$PCSX2_INSTALL_CANDIDATE" "$PCSX2_EXE"; then
+        rm -f -- "$PCSX2_INSTALL_CANDIDATE"
+        rm -rf "$TEMP_DIR"
+        die "Could not promote the pinned PCSX2 AppImage."
+    fi
 
     rm -rf "$TEMP_DIR"
 
@@ -3594,7 +3630,7 @@ if [[ ! -x "$PCSX2_EXE" ]]; then
 fi
 
 if [[ ! -x "$GUIDE_EXIT_HELPER" ]]; then
-    echo "ERROR: PCSX2 Guide helper missing: $GUIDE_EXIT_HELPER" >&2
+    echo "ERROR: PCSX2 Share helper missing: $GUIDE_EXIT_HELPER" >&2
     exit 1
 fi
 
@@ -3956,6 +3992,17 @@ if [[ -x "$PCSX2_EXE" ]]; then
 else
     die "PCSX2 installation verification failed."
 fi
+
+PCSX2_FINAL_SHA256="$(
+    sha256sum "$PCSX2_EXE" |
+        awk '{print $1}'
+)"
+
+if [[ "$PCSX2_FINAL_SHA256" != "$PCSX2_SHA256" ]]; then
+    die "Installed PCSX2 does not match the pinned SHA-256."
+fi
+
+echo "  Executable SHA-256: OK"
 
 if [[ -x "$PCSX2_LAUNCHER" ]]; then
     echo "  Mixed-region launcher: OK"
