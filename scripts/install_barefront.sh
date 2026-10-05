@@ -2365,28 +2365,28 @@ echo
 mkdir -p "$DUCKSTATION_DIR"
 
 # ------------------------------------------------------------
-# DuckStation Xbox Guide exit helper
+# DuckStation Xbox Share exit helper
 # ------------------------------------------------------------
 
 DUCKSTATION_GUIDE_SOURCE="$BAREFRONT_DIR/src/duckstation_guide_exit_helper.cpp"
 DUCKSTATION_GUIDE_HELPER="$DUCKSTATION_DIR/duckstation_guide_exit_helper"
 
 if [[ ! -f "$DUCKSTATION_GUIDE_SOURCE" ]]; then
-    die "DuckStation Guide helper source is missing."
+    die "DuckStation Share helper source is missing."
 fi
 
 if ! command -v g++ >/dev/null 2>&1 ||
    ! command -v pkg-config >/dev/null 2>&1 ||
    ! pkg-config --exists sdl2 x11 xtst
 then
-    die "DuckStation Guide helper build dependencies are missing."
+    die "DuckStation Share helper build dependencies are missing."
 fi
 
 if [[ ! -x "$DUCKSTATION_GUIDE_HELPER" ]] ||
    [[ "$DUCKSTATION_GUIDE_SOURCE" -nt "$DUCKSTATION_GUIDE_HELPER" ]]
 then
     echo
-    echo "Building DuckStation Xbox Guide helper..."
+    echo "Building DuckStation Xbox Share helper..."
 
     DUCKSTATION_GUIDE_CANDIDATE="$(
         mktemp "$DUCKSTATION_DIR/.duckstation-guide-build.XXXXXX"
@@ -2395,7 +2395,7 @@ then
     if ! g++ -std=c++17 -O2 -Wall -Wextra "$DUCKSTATION_GUIDE_SOURCE" -o "$DUCKSTATION_GUIDE_CANDIDATE" $(pkg-config --cflags --libs sdl2 x11 xtst)
     then
         rm -f -- "$DUCKSTATION_GUIDE_CANDIDATE"
-        die "DuckStation Guide helper compilation failed."
+        die "DuckStation Share helper compilation failed."
     fi
 
     chmod 755 "$DUCKSTATION_GUIDE_CANDIDATE"
@@ -2404,12 +2404,12 @@ then
     echo "Action: BUILD"
 else
     echo
-    echo "DuckStation Guide helper is already current."
+    echo "DuckStation Share helper is already current."
     echo "Action: SKIP"
 fi
 
 if [[ ! -x "$DUCKSTATION_GUIDE_HELPER" ]]; then
-    die "DuckStation Guide helper build failed."
+    die "DuckStation Share helper build failed."
 fi
 
 
@@ -2512,7 +2512,38 @@ if [[ "$NEED_DUCKSTATION_INSTALL" -eq 1 ]]; then
         die "Downloaded DuckStation file does not look executable."
     fi
 
-    install -m 0755 "$TEMP_DOWNLOAD" "$DUCKSTATION_EXE"
+    DUCKSTATION_INSTALL_CANDIDATE="$(
+        mktemp "$DUCKSTATION_DIR/.DuckStation-install.XXXXXX"
+    )"
+
+    if ! install -m 0755 \
+        "$TEMP_DOWNLOAD" \
+        "$DUCKSTATION_INSTALL_CANDIDATE"
+    then
+        rm -f -- "$DUCKSTATION_INSTALL_CANDIDATE"
+        rm -rf "$TEMP_DIR"
+        die "Could not stage the pinned DuckStation AppImage."
+    fi
+
+    CANDIDATE_SHA256="$(
+        sha256sum "$DUCKSTATION_INSTALL_CANDIDATE" |
+            awk '{print $1}'
+    )"
+
+    if [[ "$CANDIDATE_SHA256" != "$DUCKSTATION_SHA256" ]]; then
+        rm -f -- "$DUCKSTATION_INSTALL_CANDIDATE"
+        rm -rf "$TEMP_DIR"
+        die "Staged DuckStation AppImage failed SHA-256 verification."
+    fi
+
+    if ! mv -fT \
+        "$DUCKSTATION_INSTALL_CANDIDATE" \
+        "$DUCKSTATION_EXE"
+    then
+        rm -f -- "$DUCKSTATION_INSTALL_CANDIDATE"
+        rm -rf "$TEMP_DIR"
+        die "Could not promote the pinned DuckStation AppImage."
+    fi
 
     rm -rf "$TEMP_DIR"
 
@@ -2710,7 +2741,7 @@ echo "  ChangeDisc: Keyboard/F5"
 # is preserved untouched. Otherwise install the controller map
 # validated with BareFront's Xbox Series X controller.
 #
-# Xbox Guide is deliberately absent: Guide belongs to BareFront.
+# Xbox Share is deliberately absent: Share belongs to BareFront.
 # ------------------------------------------------------------
 
 python3 - "$DUCKSTATION_SETTINGS" <<'PYCONFIG_PS1_PAD1'
@@ -2733,7 +2764,7 @@ PYCONFIG_PS1_PAD1
 
 echo "DuckStation controller mapping:"
 echo "  Existing Pad1 preserved, or BareFront default installed."
-echo "  Xbox Guide remains reserved for BareFront."
+echo "  Xbox Share remains reserved for BareFront."
 
 # ------------------------------------------------------------
 # DuckStation BIOS
@@ -2753,20 +2784,22 @@ if [[ -L "$DUCK_BIOS_LINK" ]]; then
 
     if [[ "$CURRENT_TARGET" != "$BAREFRONT_PS1_BIOS" ]]; then
         echo
-        echo "WARNING: Existing DuckStation BIOS symbolic link points to:"
+        echo "ERROR: Existing DuckStation BIOS symbolic link points to:"
         echo "  $CURRENT_TARGET"
         echo "Expected:"
         echo "  $BAREFRONT_PS1_BIOS"
-        echo "Leaving the existing link untouched."
+        echo "BareFront will not overwrite it."
+        die "DuckStation BIOS must follow BareFront's active BIOS source."
     fi
 
 elif [[ -e "$DUCK_BIOS_LINK" ]]; then
 
     echo
-    echo "WARNING: DuckStation already has a real 'bios' directory."
+    echo "ERROR: DuckStation already has a real 'bios' directory."
     echo "BareFront will not overwrite it."
-    echo "Expected BareFront BIOS directory:"
+    echo "Expected BareFront BIOS source:"
     echo "  $BAREFRONT_PS1_BIOS"
+    die "DuckStation BIOS must follow BareFront's active BIOS source."
 
 else
 
@@ -2839,6 +2872,20 @@ if [[ -f "$DUCKSTATION_SETTINGS" ]]; then
 else
     die "DuckStation settings.ini is missing."
 fi
+
+if [[ ! -L "$DUCK_BIOS_LINK" ]]; then
+    die "DuckStation BIOS link is missing."
+fi
+
+DUCK_FINAL_BIOS_TARGET="$(
+    readlink "$DUCK_BIOS_LINK"
+)"
+
+if [[ "$DUCK_FINAL_BIOS_TARGET" != "$BAREFRONT_PS1_BIOS" ]]; then
+    die "DuckStation BIOS link does not follow BareFront's active BIOS source."
+fi
+
+echo "  BIOS active-source link: OK"
 
 if [[ -d "$BAREFRONT_DIR/saves/ps1" ]]; then
     echo "  PS1 save directory: OK"

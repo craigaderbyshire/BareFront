@@ -42,7 +42,7 @@ if [[ ! -x "$DUCKSTATION" ]]; then
 fi
 
 if [[ ! -x "$GUIDE_EXIT_HELPER" ]]; then
-    echo "DuckStation Guide helper missing: $GUIDE_EXIT_HELPER" >&2
+    echo "DuckStation Share helper missing: $GUIDE_EXIT_HELPER" >&2
     exit 1
 fi
 

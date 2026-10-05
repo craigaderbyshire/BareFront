@@ -29,7 +29,7 @@ bool requestDuckStationExit(bool probe)
     if (probe)
     {
         std::cout
-            << "PROBE: Guide held 1500 ms; SIGTERM NOT sent\n";
+            << "PROBE: Share held 1500 ms; SIGTERM NOT sent\n";
         std::cout.flush();
         return false;
     }
@@ -222,13 +222,13 @@ int main()
     openControllers();
 
     std::cout
-        << "DuckStation Guide helper active. DISPLAY="
+        << "DuckStation Share helper active. DISPLAY="
         << (std::getenv("DISPLAY")
                 ? std::getenv("DISPLAY")
                 : "unset")
         << "\n"
-        << "Quick Guide tap -> ignored\n"
-        << "Guide hold: 1500 ms -> Exit\n";
+        << "Quick Share tap -> ignored\n"
+        << "Share hold: 1500 ms -> Exit\n";
 
     std::cout.flush();
 
@@ -253,7 +253,7 @@ int main()
             {
                 guideFired.insert(guide.first);
 
-                std::cout << "Guide hold detected\n";
+                std::cout << "Share hold detected\n";
                 std::cout.flush();
 
                 if (requestDuckStationExit(probe))
@@ -286,7 +286,7 @@ int main()
             if (guideStarted.count(id) &&
                 !guideFired.count(id))
             {
-                std::cout << "Quick Guide tap ignored\n";
+                std::cout << "Quick Share tap ignored\n";
                 std::cout.flush();
             }
 
@@ -459,7 +459,7 @@ int main()
             guideStarted[id] = SDL_GetTicks64();
             guideFired.erase(id);
 
-            std::cout << "Xbox Guide pressed\n";
+            std::cout << "Xbox Share pressed\n";
             std::cout.flush();
         }
 
