@@ -322,7 +322,51 @@ void drawKeyboard(
     const unsigned long white =
         WhitePixel(display, screen);
 
-    XSetForeground(display, gc, black);
+    const Colormap colormap =
+        DefaultColormap(display, screen);
+
+    auto colour =
+        [&](const char* value,
+            unsigned long fallback)
+        {
+            XColor screenColour{};
+            XColor exactColour{};
+
+            if (XAllocNamedColor(
+                    display,
+                    colormap,
+                    value,
+                    &screenColour,
+                    &exactColour))
+            {
+                return screenColour.pixel;
+            }
+
+            return fallback;
+        };
+
+    const unsigned long caseBrown =
+        colour("#70513A", black);
+
+    const unsigned long caseEdge =
+        colour("#3E2D22", white);
+
+    const unsigned long keyDark =
+        colour("#292725", black);
+
+    const unsigned long keyLegend =
+        colour("#E8D8B3", white);
+
+    const unsigned long selectedKey =
+        colour("#D6A04A", white);
+
+    const unsigned long functionKey =
+        colour("#B58A57", white);
+
+    const unsigned long selectedText =
+        colour("#221B16", black);
+
+    XSetForeground(display, gc, caseBrown);
 
     XFillRectangle(
         display,
@@ -334,7 +378,7 @@ void drawKeyboard(
         static_cast<unsigned int>(height)
     );
 
-    XSetForeground(display, gc, white);
+    XSetForeground(display, gc, caseEdge);
 
     XDrawRectangle(
         display,
@@ -345,6 +389,8 @@ void drawKeyboard(
         static_cast<unsigned int>(width - 1),
         static_cast<unsigned int>(height - 1)
     );
+
+    XSetForeground(display, gc, keyLegend);
 
     const Key& selected =
         rows[selectedRow][selectedColumn];
@@ -407,17 +453,51 @@ void drawKeyboard(
         static_cast<int>(modifiers.size())
     );
 
-    const int keyboardTop = 32;
-    const int bottomMargin = 4;
+    const int keyboardTop = 42;
+    const int bottomMargin = 10;
+
+    // Breadbin proportions:
+    // main keyboard body on the left,
+    // four physical function keys in a narrow strip on the right.
+    const int sideMargin = 8;
+    const int functionGap = 6;
+    const int functionWidth = 52;
+
+    const int mainLeft = sideMargin;
+    const int mainRight =
+        width -
+        sideMargin -
+        functionWidth -
+        functionGap;
+
+    const int functionLeft =
+        mainRight +
+        functionGap;
+
+    const int mainWidth =
+        mainRight -
+        mainLeft;
 
     const int usableHeight =
         height -
         keyboardTop -
         bottomMargin;
 
+    const int keyAreaHeight =
+        std::min(
+            usableHeight,
+            150
+        );
+
     const int rowHeight =
-        usableHeight /
+        keyAreaHeight /
         static_cast<int>(rows.size());
+
+    const int mainKeyHeight =
+        std::max(
+            1,
+            rowHeight - 7
+        );
 
     for (std::size_t r = 0;
          r < rows.size();
@@ -431,29 +511,34 @@ void drawKeyboard(
 
         if (row.size() == 1)
         {
-            const int keyWidth =
-                width * 3 / 5;
+            // Real C64-style bottom row:
+            // wide space bar on the left, then the two
+            // physical cursor keys to its right.
+            const int gap = 6;
+            const int cursorWidth = 66;
+
+            const int spaceWidth =
+                std::max(
+                    120,
+                    mainWidth -
+                        (cursorWidth * 2) -
+                        (gap * 2)
+                );
 
             const int x =
-                (width - keyWidth) / 2;
+                mainLeft;
 
             const bool selectedNow =
                 static_cast<int>(r) == selectedRow &&
                 selectedColumn == 0;
 
-            const bool active =
-                keyIsActive(
-                    row[0],
-                    leftShift,
-                    rightShift,
-                    control,
-                    commodore
-                );
+            const int spaceY =
+                y + 7;
 
             XSetForeground(
                 display,
                 gc,
-                selectedNow ? white : black
+                selectedNow ? selectedKey : keyDark
             );
 
             XFillRectangle(
@@ -461,15 +546,15 @@ void drawKeyboard(
                 window,
                 gc,
                 x,
-                y + 1,
-                static_cast<unsigned int>(keyWidth),
-                static_cast<unsigned int>(rowHeight - 3)
+                spaceY,
+                static_cast<unsigned int>(spaceWidth),
+                static_cast<unsigned int>(mainKeyHeight)
             );
 
             XSetForeground(
                 display,
                 gc,
-                selectedNow ? black : white
+                selectedNow ? selectedText : keyLegend
             );
 
             XDrawRectangle(
@@ -477,25 +562,20 @@ void drawKeyboard(
                 window,
                 gc,
                 x,
-                y + 1,
-                static_cast<unsigned int>(keyWidth),
-                static_cast<unsigned int>(rowHeight - 3)
+                spaceY,
+                static_cast<unsigned int>(spaceWidth),
+                static_cast<unsigned int>(mainKeyHeight)
             );
 
-            std::string label =
-                active
-                ? std::string("[") +
-                    row[0].shortLabel +
-                    "]"
-                : row[0].shortLabel;
+            const std::string spaceLabel = "SPACE";
 
-            const int textWidth =
+            const int spaceTextWidth =
                 font
                 ? XTextWidth(
                     font,
-                    label.c_str(),
-                    static_cast<int>(label.size()))
-                : static_cast<int>(label.size()) * 6;
+                    spaceLabel.c_str(),
+                    static_cast<int>(spaceLabel.size()))
+                : static_cast<int>(spaceLabel.size()) * 6;
 
             XDrawString(
                 display,
@@ -503,10 +583,114 @@ void drawKeyboard(
                 gc,
                 x + std::max(
                         2,
-                        (keyWidth - textWidth) / 2),
-                y + rowHeight / 2 + 5,
-                label.c_str(),
-                static_cast<int>(label.size())
+                        (spaceWidth - spaceTextWidth) / 2),
+                spaceY + mainKeyHeight / 2 + 5,
+                spaceLabel.c_str(),
+                static_cast<int>(spaceLabel.size())
+            );
+
+            // Existing logical cursor keys live in row 3,
+            // columns 12 and 13. Only their drawing moves.
+            const bool cursorUDSelected =
+                selectedRow == 3 &&
+                selectedColumn == 12;
+
+            const bool cursorLRSelected =
+                selectedRow == 3 &&
+                selectedColumn == 13;
+
+            auto drawCursorKey =
+                [&](int keyX,
+                    const char* label,
+                    bool isSelected)
+                {
+                    const int cursorY =
+                        y + 7;
+
+                    XSetForeground(
+                        display,
+                        gc,
+                        isSelected
+                            ? selectedKey
+                            : keyDark
+                    );
+
+                    XFillRectangle(
+                        display,
+                        window,
+                        gc,
+                        keyX,
+                        cursorY,
+                        static_cast<unsigned int>(
+                            cursorWidth),
+                        static_cast<unsigned int>(
+                            mainKeyHeight)
+                    );
+
+                    XSetForeground(
+                        display,
+                        gc,
+                        isSelected
+                            ? selectedText
+                            : keyLegend
+                    );
+
+                    XDrawRectangle(
+                        display,
+                        window,
+                        gc,
+                        keyX,
+                        cursorY,
+                        static_cast<unsigned int>(
+                            cursorWidth),
+                        static_cast<unsigned int>(
+                            mainKeyHeight)
+                    );
+
+                    const std::string text(label);
+
+                    const int textWidth =
+                        font
+                        ? XTextWidth(
+                            font,
+                            text.c_str(),
+                            static_cast<int>(
+                                text.size()))
+                        : static_cast<int>(
+                            text.size()) * 6;
+
+                    XDrawString(
+                        display,
+                        window,
+                        gc,
+                        keyX +
+                            std::max(
+                                2,
+                                (cursorWidth -
+                                 textWidth) / 2),
+                        cursorY + mainKeyHeight / 2 + 5,
+                        text.c_str(),
+                        static_cast<int>(
+                            text.size())
+                    );
+                };
+
+            const int cursorUDX =
+                x + spaceWidth + gap;
+
+            const int cursorLRX =
+                cursorUDX + cursorWidth + gap;
+
+            drawCursorKey(
+                cursorUDX,
+                "CSR U/D",
+                cursorUDSelected
+            );
+
+            drawCursorKey(
+                cursorLRX,
+                "CSR L/R",
+                cursorLRSelected
             );
 
             continue;
@@ -515,14 +699,231 @@ void drawKeyboard(
         const int count =
             static_cast<int>(row.size());
 
+        // First four rows contain two logical function-key
+        // entries at the end. Visually they belong to one
+        // physical C64 function key in the right-hand strip.
+        const bool hasFunctionPair =
+            static_cast<int>(r) < 4 &&
+            count >= 2;
+
+        const int mainCount =
+            hasFunctionPair
+                ? count - 2
+                : count;
+
         const int keyWidth =
-            std::max(1, width / count);
+            std::max(
+                1,
+                mainWidth /
+                    std::max(1, mainCount)
+            );
 
         for (int c = 0;
              c < count;
              ++c)
         {
+            // Cursor keys are now drawn beside SPACE
+            // on the bottom row.
+            if (static_cast<int>(r) == 3 &&
+                (c == 12 || c == 13))
+            {
+                continue;
+            }
+
+            if (hasFunctionPair &&
+                c >= mainCount)
+            {
+                // Draw the physical F-key once for the pair.
+                if (c == mainCount + 1)
+                    continue;
+
+                const int fx =
+                    functionLeft;
+
+                const int fy =
+                    keyboardTop +
+                    static_cast<int>(r) *
+                        rowHeight +
+                    2;
+
+                const int fh =
+                    std::max(
+                        1,
+                        rowHeight - 5
+                    );
+
+                const bool firstSelected =
+                    static_cast<int>(r) ==
+                        selectedRow &&
+                    selectedColumn ==
+                        mainCount;
+
+                const bool secondSelected =
+                    static_cast<int>(r) ==
+                        selectedRow &&
+                    selectedColumn ==
+                        mainCount + 1;
+
+                XSetForeground(
+                    display,
+                    gc,
+                    functionKey
+                );
+
+                XFillRectangle(
+                    display,
+                    window,
+                    gc,
+                    fx,
+                    fy,
+                    static_cast<unsigned int>(
+                        functionWidth),
+                    static_cast<unsigned int>(
+                        fh)
+                );
+
+                const int halfWidth =
+                    functionWidth / 2;
+
+                if (firstSelected)
+                {
+                    XSetForeground(
+                        display,
+                        gc,
+                        selectedKey
+                    );
+
+                    XFillRectangle(
+                        display,
+                        window,
+                        gc,
+                        fx,
+                        fy,
+                        static_cast<unsigned int>(
+                            halfWidth),
+                        static_cast<unsigned int>(
+                            fh)
+                    );
+                }
+
+                if (secondSelected)
+                {
+                    XSetForeground(
+                        display,
+                        gc,
+                        selectedKey
+                    );
+
+                    XFillRectangle(
+                        display,
+                        window,
+                        gc,
+                        fx + halfWidth,
+                        fy,
+                        static_cast<unsigned int>(
+                            functionWidth -
+                            halfWidth),
+                        static_cast<unsigned int>(
+                            fh)
+                    );
+                }
+
+                XSetForeground(
+                    display,
+                    gc,
+                    caseEdge
+                );
+
+                XDrawRectangle(
+                    display,
+                    window,
+                    gc,
+                    fx,
+                    fy,
+                    static_cast<unsigned int>(
+                        functionWidth),
+                    static_cast<unsigned int>(
+                        fh)
+                );
+
+                XDrawLine(
+                    display,
+                    window,
+                    gc,
+                    fx + halfWidth,
+                    fy + 2,
+                    fx + halfWidth,
+                    fy + fh - 2
+                );
+
+                const Key& first =
+                    row[mainCount];
+
+                const Key& second =
+                    row[mainCount + 1];
+
+                auto drawFunctionLabel =
+                    [&](const Key& key,
+                        int left,
+                        int areaWidth,
+                        bool selectedHalf)
+                    {
+                        XSetForeground(
+                            display,
+                            gc,
+                            selectedHalf
+                                ? selectedText
+                                : selectedText
+                        );
+
+                        const std::string label =
+                            key.shortLabel;
+
+                        const int textWidth =
+                            font
+                            ? XTextWidth(
+                                font,
+                                label.c_str(),
+                                static_cast<int>(
+                                    label.size()))
+                            : static_cast<int>(
+                                label.size()) * 6;
+
+                        XDrawString(
+                            display,
+                            window,
+                            gc,
+                            left +
+                                std::max(
+                                    2,
+                                    (areaWidth -
+                                     textWidth) / 2),
+                            fy + fh / 2 + 5,
+                            label.c_str(),
+                            static_cast<int>(
+                                label.size())
+                        );
+                    };
+
+                drawFunctionLabel(
+                    first,
+                    fx,
+                    halfWidth,
+                    firstSelected
+                );
+
+                drawFunctionLabel(
+                    second,
+                    fx + halfWidth,
+                    functionWidth - halfWidth,
+                    secondSelected
+                );
+
+                continue;
+            }
+
             const int x =
+                mainLeft +
                 c * keyWidth;
 
             const bool selectedNow =
@@ -538,10 +939,18 @@ void drawKeyboard(
                     commodore
                 );
 
+            const bool isFunctionKey =
+                row[c].keysym >= XK_F1 &&
+                row[c].keysym <= XK_F8;
+
             XSetForeground(
                 display,
                 gc,
-                selectedNow ? white : black
+                selectedNow
+                    ? selectedKey
+                    : (isFunctionKey
+                        ? functionKey
+                        : keyDark)
             );
 
             XFillRectangle(
@@ -559,7 +968,11 @@ void drawKeyboard(
             XSetForeground(
                 display,
                 gc,
-                selectedNow ? black : white
+                selectedNow
+                    ? selectedText
+                    : (isFunctionKey
+                        ? selectedText
+                        : keyLegend)
             );
 
             XDrawRectangle(
@@ -941,9 +1354,9 @@ int main()
 
     const int height =
         std::min(
-            200,
+            300,
             std::max(
-                150,
+                240,
                 rootAttributes.height - 70
             )
         );
