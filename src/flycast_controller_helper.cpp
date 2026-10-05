@@ -161,7 +161,7 @@ int main()
                 ? std::getenv("DISPLAY")
                 : "unset")
         << "\n"
-        << "Guide hold: 1500 ms -> Exit\n"
+        << "Share hold: 1500 ms -> Exit\n"
         << "LB+RB+Y -> Flycast menu\n";
 
     std::cout.flush();
@@ -292,7 +292,7 @@ int main()
                 guideFired.insert(guide.first);
 
                 std::cout
-                    << "Guide hold detected\n";
+                    << "Share hold detected\n";
 
                 std::cout.flush();
 

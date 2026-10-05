@@ -4126,14 +4126,14 @@ mkdir -p \
 
 FLYCAST_INSTALLED_SHA256=""
 
-if [[ -x "$FLYCAST_EXE" ]]; then
+if [[ -f "$FLYCAST_EXE" ]]; then
     FLYCAST_INSTALLED_SHA256="$(
         sha256sum "$FLYCAST_EXE" | awk '{print $1}'
     )"
 fi
 
 
-if [[ -x "$FLYCAST_EXE" \
+if [[ -f "$FLYCAST_EXE" \
    && "$FLYCAST_INSTALLED_SHA256" == "$FLYCAST_EXPECTED_SHA256" ]]
 then
 
@@ -4141,14 +4141,32 @@ then
     echo "Executable:"
     echo "  $FLYCAST_EXE"
     echo "  SHA-256: OK"
+
+    chmod +x "$FLYCAST_EXE"
+
     echo "Action: SKIP"
 
 else
 
-    if [[ -x "$FLYCAST_EXE" ]]; then
+    if [[ -e "$FLYCAST_EXE" ]]; then
+
+        if [[ ! -f "$FLYCAST_EXE" ]]; then
+            die "Existing Flycast path is not a regular file."
+        fi
+
         echo "Existing Flycast build does not match the BareFront pin."
-        echo "Action: REPLACE"
-        echo
+
+        if [[ -f "$FLYCAST_DIR/VERSION.txt" ]] &&
+           grep -q '^BareFront managed emulator$' "$FLYCAST_DIR/VERSION.txt"
+        then
+            echo "Existing Flycast is BareFront-managed."
+            echo "Action: REPLACE"
+            echo
+        else
+            echo "WARNING: Existing Flycast is not marked as BareFront-managed."
+            echo "BareFront will not overwrite it."
+            die "Remove or relocate the unmanaged Flycast binary before continuing."
+        fi
     fi
 
     echo "Asking GitHub for the pinned Flycast release..."
@@ -4285,8 +4303,32 @@ else
         die "Downloaded Flycast file does not look executable."
     fi
 
-    cp "$TEMP_DOWNLOAD" "$FLYCAST_EXE"
-    chmod +x "$FLYCAST_EXE"
+    FLYCAST_INSTALL_CANDIDATE="$(
+        mktemp "$FLYCAST_DIR/.Flycast-install.XXXXXX"
+    )"
+
+    if ! install -m 0755 "$TEMP_DOWNLOAD" "$FLYCAST_INSTALL_CANDIDATE"; then
+        rm -f -- "$FLYCAST_INSTALL_CANDIDATE"
+        rm -rf "$TEMP_DIR"
+        die "Could not stage the pinned Flycast AppImage."
+    fi
+
+    FLYCAST_CANDIDATE_SHA256="$(
+        sha256sum "$FLYCAST_INSTALL_CANDIDATE" |
+            awk '{print $1}'
+    )"
+
+    if [[ "$FLYCAST_CANDIDATE_SHA256" != "$FLYCAST_EXPECTED_SHA256" ]]; then
+        rm -f -- "$FLYCAST_INSTALL_CANDIDATE"
+        rm -rf "$TEMP_DIR"
+        die "Staged Flycast AppImage failed SHA-256 verification."
+    fi
+
+    if ! mv -fT -- "$FLYCAST_INSTALL_CANDIDATE" "$FLYCAST_EXE"; then
+        rm -f -- "$FLYCAST_INSTALL_CANDIDATE"
+        rm -rf "$TEMP_DIR"
+        die "Could not promote the pinned Flycast AppImage."
+    fi
 
     cat > "$FLYCAST_DIR/VERSION.txt" <<EOF
 BareFront managed emulator
@@ -4394,7 +4436,7 @@ ensure_simple_symlink \
 
 # ------------------------------------------------------------
 # Flycast BareFront controller helper
-# Guide hold = exit; LB+RB+Y = native Flycast menu
+# Share hold = exit; LB+RB+Y = native Flycast menu
 # ------------------------------------------------------------
 
 FLYCAST_CONTROL_SOURCE="$BAREFRONT_DIR/src/flycast_controller_helper.cpp"
@@ -4480,19 +4522,80 @@ else
 
     echo "  Flycast config already exists: PRESERVED"
 
-    if ! grep -Fqx 'UseReios = no' "$FLYCAST_CONFIG" \
-       || ! grep -Fqx 'FastGDRomLoad = no' "$FLYCAST_CONFIG" \
-       || ! grep -Fqx "Dreamcast.BiosPath = $FLYCAST_DATA_DIR" "$FLYCAST_CONFIG" \
-       || ! grep -Fqx 'rend.Resolution = 480' "$FLYCAST_CONFIG" \
-       || ! grep -Fqx 'rend.LinearInterpolation = no' "$FLYCAST_CONFIG" \
-       || ! grep -Fqx 'rend.TextureUpscale2 = 1' "$FLYCAST_CONFIG" \
-       || ! grep -Fqx 'rend.WideScreen = no' "$FLYCAST_CONFIG"
-    then
-        echo "  WARNING: existing Flycast config does not contain"
-        echo "           the complete BareFront Dreamcast presentation baseline."
-    fi
-
 fi
+
+
+# BareFront owns only the presentation/appliance keys below.
+# Preserve every unrelated Flycast and user-managed setting.
+python3 - "$FLYCAST_CONFIG" "$FLYCAST_DATA_DIR" <<'PYFLYCAST_CONFIG'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+data_dir = sys.argv[2]
+
+lines = path.read_text().splitlines()
+
+
+def set_value(section, key, value):
+    header = f"[{section}]"
+
+    try:
+        section_start = lines.index(header)
+    except ValueError:
+        if lines and lines[-1] != "":
+            lines.append("")
+
+        lines.extend([
+            header,
+            f"{key} = {value}",
+            "",
+        ])
+        return
+
+    section_end = len(lines)
+
+    for i in range(section_start + 1, len(lines)):
+        if lines[i].startswith("[") and lines[i].endswith("]"):
+            section_end = i
+            break
+
+    for i in range(section_start + 1, section_end):
+        if "=" not in lines[i]:
+            continue
+
+        existing_key = lines[i].split("=", 1)[0].strip()
+
+        if existing_key == key:
+            lines[i] = f"{key} = {value}"
+            return
+
+    lines.insert(section_end, f"{key} = {value}")
+
+
+owned = {
+    "UseReios": "no",
+    "FastGDRomLoad": "no",
+    "Dreamcast.BiosPath": data_dir,
+    "rend.Resolution": "480",
+    "rend.IntegerScale": "no",
+    "rend.LinearInterpolation": "no",
+    "rend.AnisotropicFiltering": "1",
+    "rend.TextureFiltering": "0",
+    "rend.TextureUpscale2": "1",
+    "rend.WideScreen": "no",
+    "rend.SuperWideScreen": "no",
+    "rend.WidescreenGameHacks": "no",
+    "rend.ScreenStretching": "100",
+}
+
+for key, value in owned.items():
+    set_value("config", key, value)
+
+path.write_text("\n".join(lines) + "\n")
+PYFLYCAST_CONFIG
+
+echo "  Flycast BareFront presentation baseline: ENFORCED"
 
 
 if [[ ! -f "$FLYCAST_KEYBOARD_MAPPING" ]]; then
@@ -4544,8 +4647,8 @@ fi
 
 
 # Xbox Series X controller baseline.
-# BareFront owns Guide externally so a quick Guide tap is harmless.
-# The helper turns a 1500 ms Guide hold into Escape and LB+RB+Y
+# BareFront owns Share externally so a quick Share tap is harmless.
+# The helper turns a 1500 ms Share hold into Escape and LB+RB+Y
 # into Flycast's native menu. Keep numbered digital binds contiguous.
 FLYCAST_XBOX_MAPPING_SOURCE="$BAREFRONT_DIR/assets/config/flycast/SDL_Xbox Series X Controller.cfg"
 FLYCAST_XBOX_MAPPING="$FLYCAST_MAPPING_DIR/SDL_Xbox Series X Controller.cfg"
@@ -4594,7 +4697,7 @@ else
         install -m 0644 "$FLYCAST_XBOX_MAPPING_SOURCE" "$FLYCAST_XBOX_MAPPING" ||
             die "Could not migrate the Flycast Xbox mapping."
 
-        echo "  Flycast Guide-hold controller mapping: MIGRATED"
+        echo "  Flycast Share-hold controller mapping: MIGRATED"
         echo "  Previous mapping: $FLYCAST_XBOX_MAPPING_BACKUP"
 
     else
@@ -4603,7 +4706,7 @@ else
 
         if grep -Fq '11:btn_escape' "$FLYCAST_XBOX_MAPPING"; then
             echo "  WARNING: custom Flycast mapping still assigns"
-            echo "           Guide directly to Exit."
+            echo "           Share directly to Exit."
         fi
 
     fi
@@ -4672,6 +4775,17 @@ else
     die "Flycast installation verification failed."
 fi
 
+FLYCAST_FINAL_SHA256="$(
+    sha256sum "$FLYCAST_EXE" |
+        awk '{print $1}'
+)"
+
+if [[ "$FLYCAST_FINAL_SHA256" != "$FLYCAST_EXPECTED_SHA256" ]]; then
+    die "Installed Flycast does not match the pinned SHA-256."
+fi
+
+echo "  Executable SHA-256: OK"
+
 if [[ -x "$FLYCAST_LAUNCHER" ]]; then
     echo "  BareFront wrapper: OK"
 else
@@ -4690,16 +4804,37 @@ else
     die "Dreamcast presentation overlay is missing."
 fi
 
-if [[ -L "$FLYCAST_BOOT_LINK" ]]; then
+for expected in \
+    'UseReios = no' \
+    'FastGDRomLoad = no' \
+    "Dreamcast.BiosPath = $FLYCAST_DATA_DIR" \
+    'rend.Resolution = 480' \
+    'rend.IntegerScale = no' \
+    'rend.LinearInterpolation = no' \
+    'rend.AnisotropicFiltering = 1' \
+    'rend.TextureFiltering = 0' \
+    'rend.TextureUpscale2 = 1' \
+    'rend.WideScreen = no' \
+    'rend.SuperWideScreen = no' \
+    'rend.WidescreenGameHacks = no' \
+    'rend.ScreenStretching = 100'
+do
+    grep -Fqx "$expected" "$FLYCAST_CONFIG" ||
+        die "Flycast presentation configuration verification failed."
+done
+
+echo "  Presentation configuration: OK"
+
+if [[ "$(readlink "$FLYCAST_BOOT_LINK" 2>/dev/null || true)" == "$BAREFRONT_DC_BOOT" ]]; then
     echo "  Boot ROM link: OK"
 else
-    echo "  Boot ROM link: WARNING"
+    die "Flycast boot ROM link verification failed."
 fi
 
-if [[ -L "$FLYCAST_FLASH_LINK" ]]; then
+if [[ "$(readlink "$FLYCAST_FLASH_LINK" 2>/dev/null || true)" == "$BAREFRONT_DC_FLASH_WORKING" ]]; then
     echo "  Writable flash link: OK"
 else
-    echo "  Writable flash link: WARNING"
+    die "Flycast writable flash link verification failed."
 fi
 
 echo
