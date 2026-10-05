@@ -5175,7 +5175,7 @@ bool runContentSourcePreflight(
             drawContentSourceText(
                 renderer,
                 smallFont,
-                "A  RETRY",
+                "A - Retry",
                 150,
                 500,
                 white
@@ -5196,7 +5196,7 @@ bool runContentSourcePreflight(
             drawContentSourceText(
                 renderer,
                 smallFont,
-                "A  RETRY",
+                "A - Retry",
                 150,
                 500,
                 white
@@ -5251,8 +5251,17 @@ bool runContentSourcePreflight(
             drawContentSourceText(
                 renderer,
                 smallFont,
-                "A  SELECT",
+                "D-PAD - Move",
                 150,
+                635,
+                white
+            );
+
+            drawContentSourceText(
+                renderer,
+                smallFont,
+                "A - Select",
+                500,
                 635,
                 white
             );
