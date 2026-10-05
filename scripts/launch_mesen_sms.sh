@@ -51,7 +51,7 @@ if [[ ! -x "$MENU_NUDGE_HELPER" ]]; then
 fi
 
 if [[ ! -x "$GUIDE_EXIT_HELPER" ]]; then
-    echo "Mesen Guide exit helper not found: $GUIDE_EXIT_HELPER"
+    echo "Mesen Share exit helper not found: $GUIDE_EXIT_HELPER"
     exit 1
 fi
 

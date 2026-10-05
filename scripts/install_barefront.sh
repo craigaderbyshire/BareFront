@@ -1635,6 +1635,7 @@ MESEN_VERSION="2.2.1"
 MESEN_CONFIG_UPGRADE="5"
 MESEN_ASSET_NAME_EXPECTED="Mesen_2.2.1_Linux_x64.zip"
 MESEN_EXPECTED_SHA256="c88ff4d251b407515c43d3332d641927655cd69fb538996b6a21da4509dbb58f"
+MESEN_EXPECTED_EXE_SHA256="64bc63dc04ae9dfe78fc6089155d5321b68fd4e5198b3c973a80532a8e285334"
 
 MESEN_API="https://api.github.com/repos/nesdev-org/MesenCE/releases/tags/$MESEN_VERSION"
 
@@ -1654,14 +1655,26 @@ MESEN_INSTALLED_RELEASE="$(
     sed -n 's/^Release: //p' "$MESEN_DIR/VERSION.txt" 2>/dev/null         | head -1 || true
 )"
 
+MESEN_INSTALLED_SHA256=""
+
+if [[ -f "$MESEN_EXE" ]]; then
+    MESEN_INSTALLED_SHA256="$(
+        sha256sum "$MESEN_EXE" |
+            awk '{print $1}'
+    )"
+fi
+
 if [[ -x "$MESEN_EXE" &&
-      "$MESEN_INSTALLED_RELEASE" == "$MESEN_VERSION" ]]; then
+      "$MESEN_INSTALLED_RELEASE" == "$MESEN_VERSION" &&
+      "$MESEN_INSTALLED_SHA256" == "$MESEN_EXPECTED_EXE_SHA256" ]]; then
 
     echo "Pinned MesenCE release is already installed."
     echo "Release:"
     echo "  $MESEN_INSTALLED_RELEASE"
     echo "Executable:"
     echo "  $MESEN_EXE"
+    echo "Executable SHA-256:"
+    echo "  $MESEN_INSTALLED_SHA256"
     echo "Action: SKIP"
 
 else
@@ -1818,6 +1831,8 @@ else
     EXTRACT_DIR="$TEMP_DIR/extracted"
     mkdir -p "$EXTRACT_DIR"
 
+    MESEN_INSTALL_SOURCE=""
+
     if grep -qi "Zip archive" <<< "$DOWNLOAD_TYPE"; then
 
         echo "Extracting ZIP archive..."
@@ -1836,12 +1851,12 @@ else
             die "Mesen executable was not found inside the downloaded ZIP."
         fi
 
-        cp "$FOUND_MESEN" "$MESEN_EXE"
+        MESEN_INSTALL_SOURCE="$FOUND_MESEN"
 
     elif grep -qiE "ELF .* executable|AppImage|executable" <<< "$DOWNLOAD_TYPE"; then
 
         echo "Downloaded asset is directly executable."
-        cp "$TEMP_DOWNLOAD" "$MESEN_EXE"
+        MESEN_INSTALL_SOURCE="$TEMP_DOWNLOAD"
 
     else
 
@@ -1852,16 +1867,54 @@ else
         die "BareFront does not yet know how to unpack this MesenCE release asset."
     fi
 
-    chmod +x "$MESEN_EXE"
+    MESEN_INSTALL_CANDIDATE="$(
+        mktemp "$MESEN_DIR/.Mesen-install.XXXXXX"
+    )"
+
+    if ! cp "$MESEN_INSTALL_SOURCE" "$MESEN_INSTALL_CANDIDATE"; then
+        rm -f -- "$MESEN_INSTALL_CANDIDATE"
+        rm -rf "$TEMP_DIR"
+        die "Could not stage the pinned Mesen executable."
+    fi
+
+    chmod 0755 "$MESEN_INSTALL_CANDIDATE"
+
+    MESEN_CANDIDATE_SHA256="$(
+        sha256sum "$MESEN_INSTALL_CANDIDATE" |
+            awk '{print $1}'
+    )"
+
+    if [[ "$MESEN_CANDIDATE_SHA256" != "$MESEN_EXPECTED_EXE_SHA256" ]]; then
+        rm -f -- "$MESEN_INSTALL_CANDIDATE"
+        rm -rf "$TEMP_DIR"
+        die "Extracted Mesen executable does not match the BareFront-tested SHA-256."
+    fi
+
+    if ! mv -fT \
+        "$MESEN_INSTALL_CANDIDATE" \
+        "$MESEN_EXE"
+    then
+        rm -f -- "$MESEN_INSTALL_CANDIDATE"
+        rm -rf "$TEMP_DIR"
+        die "Could not promote the pinned Mesen executable."
+    fi
 
     # Keep a small human-readable record of what BareFront installed.
-    cat > "$MESEN_DIR/VERSION.txt" <<EOF
+    MESEN_VERSION_CANDIDATE="$(
+        mktemp "$MESEN_DIR/.VERSION.txt.XXXXXX"
+    )"
+
+    cat > "$MESEN_VERSION_CANDIDATE" <<EOF
 BareFront managed emulator
 Emulator: Mesen Community Edition
 Release: $MESEN_VERSION
 Source: https://github.com/nesdev-org/MesenCE
 Asset: $MESEN_ASSET_NAME
 EOF
+
+    mv -fT \
+        "$MESEN_VERSION_CANDIDATE" \
+        "$MESEN_DIR/VERSION.txt"
 
     rm -rf "$TEMP_DIR"
 
@@ -1883,6 +1936,17 @@ if [[ -x "$MESEN_EXE" ]]; then
 else
     die "Mesen installation verification failed."
 fi
+
+MESEN_FINAL_SHA256="$(
+    sha256sum "$MESEN_EXE" |
+        awk '{print $1}'
+)"
+
+if [[ "$MESEN_FINAL_SHA256" != "$MESEN_EXPECTED_EXE_SHA256" ]]; then
+    die "Installed Mesen executable failed BareFront SHA-256 verification."
+fi
+
+echo "  Executable SHA-256: OK"
 
 if [[ -f "$MESEN_DIR/VERSION.txt" ]]; then
     echo
@@ -1912,10 +1976,24 @@ then
     echo
     echo "Building Mesen menu nudge helper..."
 
-    g++ -std=c++17 -O2 \
+    MESEN_MENU_NUDGE_CANDIDATE="$(
+        mktemp "$MESEN_DIR/.mesen-menu-nudge-build.XXXXXX"
+    )"
+
+    if ! g++ -std=c++17 -O2 \
         "$MESEN_MENU_NUDGE_SOURCE" \
-        -o "$MESEN_MENU_NUDGE_HELPER" \
+        -o "$MESEN_MENU_NUDGE_CANDIDATE" \
         -lX11
+    then
+        rm -f -- "$MESEN_MENU_NUDGE_CANDIDATE"
+        die "Mesen menu nudge helper compilation failed."
+    fi
+
+    chmod 0755 "$MESEN_MENU_NUDGE_CANDIDATE"
+
+    mv -fT \
+        "$MESEN_MENU_NUDGE_CANDIDATE" \
+        "$MESEN_MENU_NUDGE_HELPER"
 
     echo "Action: BUILD"
 else
@@ -1929,30 +2007,44 @@ if [[ ! -x "$MESEN_MENU_NUDGE_HELPER" ]]; then
 fi
 
 if [[ ! -f "$MESEN_GUIDE_EXIT_SOURCE" ]]; then
-    die "Mesen Guide exit helper source is missing."
+    die "Mesen Share exit helper source is missing."
 fi
 
 if [[ ! -x "$MESEN_GUIDE_EXIT_HELPER" ]] || \
    [[ "$MESEN_GUIDE_EXIT_SOURCE" -nt "$MESEN_GUIDE_EXIT_HELPER" ]]
 then
     echo
-    echo "Building Mesen Guide exit helper..."
+    echo "Building Mesen Share exit helper..."
 
-    g++ -std=c++17 -O2 \
+    MESEN_GUIDE_EXIT_CANDIDATE="$(
+        mktemp "$MESEN_DIR/.mesen-share-exit-build.XXXXXX"
+    )"
+
+    if ! g++ -std=c++17 -O2 \
         "$MESEN_GUIDE_EXIT_SOURCE" \
-        -o "$MESEN_GUIDE_EXIT_HELPER" \
+        -o "$MESEN_GUIDE_EXIT_CANDIDATE" \
         $(sdl2-config --cflags --libs) \
         -lX11 -lXtst
+    then
+        rm -f -- "$MESEN_GUIDE_EXIT_CANDIDATE"
+        die "Mesen Share exit helper compilation failed."
+    fi
+
+    chmod 0755 "$MESEN_GUIDE_EXIT_CANDIDATE"
+
+    mv -fT \
+        "$MESEN_GUIDE_EXIT_CANDIDATE" \
+        "$MESEN_GUIDE_EXIT_HELPER"
 
     echo "Action: BUILD"
 else
     echo
-    echo "Mesen Guide exit helper is already current."
+    echo "Mesen Share exit helper is already current."
     echo "Action: SKIP"
 fi
 
 if [[ ! -x "$MESEN_GUIDE_EXIT_HELPER" ]]; then
-    die "Mesen Guide exit helper build failed."
+    die "Mesen Share exit helper build failed."
 fi
 
 echo

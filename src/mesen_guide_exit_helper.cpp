@@ -158,8 +158,8 @@ int main()
                 ? std::getenv("DISPLAY")
                 : "unset")
         << "\n"
-        << "Quick Guide tap -> ignored\n"
-        << "Guide hold: 1500 ms -> Exit\n";
+        << "Quick Share tap -> ignored\n"
+        << "Share hold: 1500 ms -> Exit\n";
 
     std::cout.flush();
 
@@ -229,7 +229,7 @@ int main()
                 guideFired.insert(guide.first);
 
                 std::cout
-                    << "Guide hold detected\n";
+                    << "Share hold detected\n";
 
                 std::cout.flush();
 
