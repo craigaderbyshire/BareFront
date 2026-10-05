@@ -6101,6 +6101,27 @@ int main()
     bool useTatePreview =
         false;
 
+    bool previewPending =
+        false;
+
+    bool previewStarted =
+        false;
+
+    bool previewWaitingForVideo =
+        false;
+
+    Uint32 previewRequestedAt =
+        0;
+
+    Uint32 previewStartedAt =
+        0;
+
+    constexpr Uint32 previewDelayMs =
+        500;
+
+    constexpr Uint32 previewVideoTimeoutMs =
+        2000;
+
     // Shader selection is remembered per system.
     const fs::path shaderPrefsPath =
         "saves/presentation/shaders.ini";
@@ -6987,18 +7008,6 @@ int main()
                         }
 
 
-                        if (!games.empty())
-                        {
-                            refreshGamePreview(
-                                renderer,
-                                videoPlayer,
-                                screenshotTexture,
-                                useTatePreview,
-                                systems[activeSystemIndex],
-                                games[gameSelected],
-                                currentPreviewArtwork()
-                            );
-                        }
 
 
                         screen =
@@ -7134,15 +7143,25 @@ int main()
 
                         if (!games.empty())
                         {
-                            refreshGamePreview(
-                                renderer,
-                                videoPlayer,
-                                screenshotTexture,
-                                useTatePreview,
-                                systems[activeSystemIndex],
-                                games[gameSelected],
-                                currentPreviewArtwork()
-                            );
+                            const Uint32 now =
+                                SDL_GetTicks();
+
+                            previewPending =
+                                true;
+
+                            previewStarted =
+                                false;
+
+                            previewWaitingForVideo =
+                                false;
+
+                            previewRequestedAt =
+                                now;
+                        }
+                        else
+                        {
+                            previewPending =
+                                false;
                         }
 
                         screen = Screen::Games;
@@ -7643,18 +7662,36 @@ switch (action)
 
 
                             // P/R may have created new media while the
-                            // emulator was running. Refresh immediately
-                            // so a new video takes priority over the
-                            // screenshot when BareFront returns.
-                            refreshGamePreview(
-                                renderer,
-                                videoPlayer,
-                                screenshotTexture,
-                                useTatePreview,
-                                systems[activeSystemIndex],
-                                games[gameSelected],
-                                currentPreviewArtwork()
-                            );
+                            // emulator was running. Re-enter the normal
+                            // CRT tuning sequence so newly created video
+                            // or screenshots never flash through stale
+                            // preview media.
+                            videoPlayer.stop();
+
+                            if (screenshotTexture)
+                            {
+                                SDL_DestroyTexture(
+                                    screenshotTexture
+                                );
+
+                                screenshotTexture =
+                                    nullptr;
+                            }
+
+                            useTatePreview =
+                                false;
+
+                            previewPending =
+                                !games.empty();
+
+                            previewStarted =
+                                false;
+
+                            previewWaitingForVideo =
+                                false;
+
+                            previewRequestedAt =
+                                SDL_GetTicks();
 
 
                             // BareFront is blocked while the
@@ -7755,23 +7792,127 @@ switch (action)
 
                 if (selectionChanged)
                 {
-                    selectedSince =
+                    const Uint32 now =
                         SDL_GetTicks();
 
+                    selectedSince =
+                        now;
 
-                    if (!games.empty())
+                    // Immediately remove the old preview.
+                    // The newly selected game's media is
+                    // deliberately deferred so the CRT can
+                    // show its tuning/static transition.
+                    videoPlayer.stop();
+
+                    if (screenshotTexture)
                     {
-                        refreshGamePreview(
-                            renderer,
-                            videoPlayer,
-                            screenshotTexture,
-                            useTatePreview,
-                            systems[activeSystemIndex],
-                            games[gameSelected],
-                            currentPreviewArtwork()
+                        SDL_DestroyTexture(
+                            screenshotTexture
                         );
+
+                        screenshotTexture =
+                            nullptr;
                     }
+
+                    useTatePreview =
+                        false;
+
+                    previewPending =
+                        !games.empty();
+
+                    previewStarted =
+                        false;
+
+                    previewWaitingForVideo =
+                        false;
+
+                    previewRequestedAt =
+                        now;
                 }
+            }
+        }
+
+
+        // Resolve a settled game selection after the
+        // short CRT tuning delay. Repeated navigation keeps
+        // resetting previewRequestedAt, so fast scrolling
+        // never starts stale preview media.
+        if (previewPending &&
+            screen == Screen::Games &&
+            !games.empty())
+        {
+            const Uint32 now =
+                SDL_GetTicks();
+
+            if (!previewStarted &&
+                now - previewRequestedAt >=
+                    previewDelayMs)
+            {
+                const fs::path artworkGame =
+                    currentPreviewArtwork();
+
+                const fs::path& previewGame =
+                    artworkGame.empty()
+                        ? games[gameSelected]
+                        : artworkGame;
+
+                fs::path videoPath =
+                    findVideo(
+                        systems[activeSystemIndex],
+                        previewGame
+                    );
+
+                if (videoPath.empty() &&
+                    previewGame != games[gameSelected])
+                {
+                    videoPath =
+                        findVideo(
+                            systems[activeSystemIndex],
+                            games[gameSelected]
+                        );
+                }
+
+                previewWaitingForVideo =
+                    !videoPath.empty();
+
+                refreshGamePreview(
+                    renderer,
+                    videoPlayer,
+                    screenshotTexture,
+                    useTatePreview,
+                    systems[activeSystemIndex],
+                    games[gameSelected],
+                    artworkGame
+                );
+
+                previewStarted =
+                    true;
+
+                previewStartedAt =
+                    now;
+
+                // Screenshot-only and NO SIGNAL previews
+                // can appear immediately after the tuning
+                // delay. Video previews keep showing static
+                // until FFmpeg supplies its first frame.
+                if (!previewWaitingForVideo)
+                {
+                    previewPending =
+                        false;
+                }
+            }
+
+            if (previewStarted &&
+                previewWaitingForVideo &&
+                (videoPlayer.hasFrame() ||
+                 now - previewStartedAt >=
+                     previewVideoTimeoutMs))
+            {
+                previewPending =
+                    false;
+
+                previewWaitingForVideo =
+                    false;
             }
         }
 
@@ -8616,7 +8757,132 @@ switch (action)
             );
 
 
-            if (videoPlayer.hasFrame())
+            if (previewPending)
+            {
+                // Short analogue-TV tuning burst while the
+                // newly highlighted game's preview settles.
+                //
+                // The noise seed changes every frame, giving
+                // genuinely moving snow without needing an
+                // external texture or media file.
+                Uint32 noise =
+                    SDL_GetTicks() *
+                    1664525u +
+                    1013904223u;
+
+                SDL_SetRenderDrawColor(
+                    renderer,
+                    28,
+                    28,
+                    28,
+                    255
+                );
+
+                SDL_RenderFillRect(
+                    renderer,
+                    &screenArea
+                );
+
+                for (int i = 0;
+                     i < 700;
+                     ++i)
+                {
+                    noise =
+                        noise * 1664525u +
+                        1013904223u;
+
+                    const int px =
+                        screenArea.x +
+                        static_cast<int>(
+                            noise %
+                            static_cast<Uint32>(
+                                screenArea.w
+                            )
+                        );
+
+                    noise =
+                        noise * 1664525u +
+                        1013904223u;
+
+                    const int py =
+                        screenArea.y +
+                        static_cast<int>(
+                            noise %
+                            static_cast<Uint32>(
+                                screenArea.h
+                            )
+                        );
+
+                    noise =
+                        noise * 1664525u +
+                        1013904223u;
+
+                    const Uint8 shade =
+                        static_cast<Uint8>(
+                            55 +
+                            (noise % 201u)
+                        );
+
+                    const SDL_Rect speck =
+                    {
+                        px,
+                        py,
+                        2,
+                        2
+                    };
+
+                    SDL_SetRenderDrawColor(
+                        renderer,
+                        shade,
+                        shade,
+                        shade,
+                        255
+                    );
+
+                    SDL_RenderFillRect(
+                        renderer,
+                        &speck
+                    );
+                }
+
+                // A few brighter horizontal streaks give the
+                // burst a more convincing old-TV tuning feel.
+                for (int i = 0;
+                     i < 5;
+                     ++i)
+                {
+                    noise =
+                        noise * 1664525u +
+                        1013904223u;
+
+                    const int lineY =
+                        screenArea.y +
+                        static_cast<int>(
+                            noise %
+                            static_cast<Uint32>(
+                                screenArea.h
+                            )
+                        );
+
+                    SDL_SetRenderDrawColor(
+                        renderer,
+                        185,
+                        185,
+                        185,
+                        180
+                    );
+
+                    SDL_RenderDrawLine(
+                        renderer,
+                        screenArea.x,
+                        lineY,
+                        screenArea.x +
+                            screenArea.w - 1,
+                        lineY
+                    );
+                }
+            }
+            else if (videoPlayer.hasFrame())
             {
                 videoPlayer.draw(
                     renderer,
