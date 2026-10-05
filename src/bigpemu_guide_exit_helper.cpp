@@ -80,10 +80,10 @@ int main(int argc, char* argv[])
         }
     }
 
-    std::cout << "Jaguar Guide helper active. PID="
+    std::cout << "Jaguar Share helper active. PID="
               << pid << "\n"
-              << "Quick Guide tap -> ignored\n"
-              << "Guide hold: 1500 ms -> Exit\n";
+              << "Quick Share tap -> ignored\n"
+              << "Share hold: 1500 ms -> Exit\n";
     std::cout.flush();
 
     constexpr Uint64 GUIDE_HOLD_MS = 1500;
@@ -102,7 +102,7 @@ int main(int argc, char* argv[])
                 now - guide.second >= GUIDE_HOLD_MS) {
                 guideFired.insert(guide.first);
 
-                std::cout << "Guide hold detected\n";
+                std::cout << "Share hold detected\n";
                 std::cout.flush();
 
                 // Never signal a PID that has ceased to be BigPEmu.
@@ -140,7 +140,7 @@ int main(int argc, char* argv[])
 
         // SDL may translate launcher termination into SDL_QUIT.
         if (event.type == SDL_QUIT) {
-            std::cout << "Jaguar Guide helper quitting\n";
+            std::cout << "Jaguar Share helper quitting\n";
             std::cout.flush();
             break;
         }
@@ -151,7 +151,7 @@ int main(int argc, char* argv[])
 
             if (guideStarted.count(id) &&
                 !guideFired.count(id)) {
-                std::cout << "Quick Guide tap ignored\n";
+                std::cout << "Quick Share tap ignored\n";
                 std::cout.flush();
             }
 
@@ -179,7 +179,7 @@ int main(int argc, char* argv[])
             guideStarted[id] = SDL_GetTicks64();
             guideFired.erase(id);
 
-            std::cout << "Xbox Guide pressed\n";
+            std::cout << "Xbox Share pressed\n";
             std::cout.flush();
         }
     }

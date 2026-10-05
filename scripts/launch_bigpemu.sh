@@ -46,7 +46,7 @@ if [[ ! -x "$ESC_HELPER" ]]; then
 fi
 
 if [[ ! -x "$GUIDE_HELPER" ]]; then
-    echo "BigPEmu Guide helper not found: $GUIDE_HELPER" >&2
+    echo "BigPEmu Share helper not found: $GUIDE_HELPER" >&2
     exit 1
 fi
 

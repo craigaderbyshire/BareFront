@@ -4860,6 +4860,10 @@ BIGPEMU_GUIDE_SOURCE="$BAREFRONT_DIR/src/bigpemu_guide_exit_helper.cpp"
 BIGPEMU_GUIDE_HELPER="$BIGPEMU_DIR/bigpemu_guide_exit_helper"
 BIGPEMU_GAMESCOPE="$BAREFRONT_DIR/runtime/presentation/gamescope/gamescope"
 BIGPEMU_OVERLAY="$BAREFRONT_DIR/assets/overlays/jaguar.png"
+BIGPEMU_CONFIG_BASELINE="$BAREFRONT_DIR/assets/config/bigpemu/BigPEmuConfig.bigpcfg"
+BIGPEMU_USERDATA_DIR="$BIGPEMU_DIR/bigpemu/bigpemu_userdata"
+BIGPEMU_CONFIG="$BIGPEMU_USERDATA_DIR/BigPEmuConfig.bigpcfg"
+BIGPEMU_CONFIG_BASELINE_SHA256="d74d6075c01b009f77cbededa874633d53ecfed872250800e7d8af3de0ecab65"
 
 # BigPEmu does not currently publish releases through a package
 # manager or machine-readable release API.
@@ -4871,6 +4875,7 @@ BIGPEMU_VERSION="1.221"
 BIGPEMU_URL="https://www.richwhitehouse.com/jaguar/builds/BigPEmu_Linux64_v1221.tar.gz"
 BIGPEMU_EXPECTED_SIZE="8912737"
 BIGPEMU_EXPECTED_FNV="C1B241BBFA5135CB"
+BIGPEMU_EXPECTED_EXEC_SHA256="2f7cc9c80c1b0cafae432899ace8cf979fa49cf9aa28b572801d7a34480cf8ea"
 
 echo "BareFront uses BigPEmu for:"
 echo "  Atari Jaguar"
@@ -4885,41 +4890,75 @@ echo
 
 BIGPEMU_UPSTREAM_EXEC="$BIGPEMU_DIR/bigpemu/bigpemu"
 
-if [[ -x "$BIGPEMU_LAUNCHER" ]]; then
+BIGPEMU_INSTALLED_EXEC_SHA256=""
 
-    echo "BigPEmu is already installed."
-    echo "BareFront launcher:"
-    echo "  $BIGPEMU_LAUNCHER"
-    echo "Action: SKIP"
+if [[ -f "$BIGPEMU_UPSTREAM_EXEC" ]]; then
+    BIGPEMU_INSTALLED_EXEC_SHA256="$(
+        sha256sum "$BIGPEMU_UPSTREAM_EXEC" |
+            awk '{print $1}'
+    )"
+fi
 
-elif [[ -x "$BIGPEMU_UPSTREAM_EXEC" ]]; then
+BIGPEMU_MANAGED=0
 
-    echo "Existing BigPEmu installation recognised."
-    echo "Executable:"
-    echo "  $BIGPEMU_UPSTREAM_EXEC"
-    echo
-    echo "Creating BareFront launcher link."
+if [[ -f "$BIGPEMU_DIR/VERSION.txt" ]] &&
+   grep -q '^BareFront managed emulator$' "$BIGPEMU_DIR/VERSION.txt"
+then
+    BIGPEMU_MANAGED=1
+fi
 
-    ln -s "$BIGPEMU_UPSTREAM_EXEC" "$BIGPEMU_LAUNCHER"
+NEED_BIGPEMU_INSTALL=1
 
-    echo "Action: ADOPT EXISTING INSTALLATION"
+if [[ "$BIGPEMU_MANAGED" -eq 1 &&
+      "$BIGPEMU_INSTALLED_EXEC_SHA256" == "$BIGPEMU_EXPECTED_EXEC_SHA256" ]]
+then
 
-else
+    chmod +x "$BIGPEMU_UPSTREAM_EXEC"
 
-    # If a partial/unrecognised installation already exists,
-    # do not destroy it automatically.
-    if [[ -d "$BIGPEMU_DIR" ]] && \
-       [[ -n "$(find "$BIGPEMU_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]
-    then
-        echo
-        echo "A non-empty BigPEmu directory already exists:"
-        echo "  $BIGPEMU_DIR"
-        echo
-        echo "BareFront will not overwrite an unrecognised installation."
-        die "Inspect or remove the existing BigPEmu directory before retrying."
+    if [[ -L "$BIGPEMU_LAUNCHER" ]]; then
+
+        if [[ "$(readlink "$BIGPEMU_LAUNCHER")" != "$BIGPEMU_UPSTREAM_EXEC" ]]; then
+            die "Existing BigPEmu launcher link points to an unexpected target."
+        fi
+
+    elif [[ -e "$BIGPEMU_LAUNCHER" ]]; then
+
+        die "Existing BigPEmu launcher path is not BareFront's symbolic link."
+
+    else
+
+        ln -s "$BIGPEMU_UPSTREAM_EXEC" "$BIGPEMU_LAUNCHER"
+        echo "BigPEmu launcher link repaired."
+
     fi
 
-    mkdir -p "$BIGPEMU_DIR"
+    echo "BigPEmu pinned build is already installed."
+    echo "  Executable SHA-256: OK"
+    echo "Action: SKIP"
+
+    NEED_BIGPEMU_INSTALL=0
+
+elif [[ -e "$BIGPEMU_DIR" ]]; then
+
+    if [[ -d "$BIGPEMU_DIR" ]] &&
+       [[ -z "$(find "$BIGPEMU_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]
+    then
+        rmdir "$BIGPEMU_DIR"
+    else
+        echo
+        echo "Existing BigPEmu installation does not match BareFront's exact pin."
+        echo "BareFront will not replace it automatically because BigPEmu's"
+        echo "local-data directory may contain user configuration and screenshots."
+        die "Inspect the existing BigPEmu installation before continuing."
+    fi
+
+fi
+
+
+if [[ "$NEED_BIGPEMU_INSTALL" -eq 1 ]]; then
+
+    BIGPEMU_PARENT="$(dirname "$BIGPEMU_DIR")"
+    mkdir -p "$BIGPEMU_PARENT"
 
     TEMP_DIR="$(mktemp -d)"
     TEMP_ARCHIVE="$TEMP_DIR/BigPEmu.tar.gz"
@@ -5043,41 +5082,40 @@ PY
 
     chmod +x "$FOUND_BIGPEMU"
 
-    # Copy the entire extracted tree, not merely the executable.
-    # BigPEmu explicitly expects its support directory structure
-    # to remain intact.
-    cp -a "$EXTRACT_DIR"/. "$BIGPEMU_DIR"/
-
-    rm -rf "$TEMP_DIR"
-
-
-    # --------------------------------------------------------
-    # Create a predictable BareFront launcher link.
-    #
-    # Upstream keeps its own directory layout intact, while
-    # BareFront can always launch:
-    #
-    #   emulators/bigpemu/BigPEmu
-    # --------------------------------------------------------
-
-    INSTALLED_BIGPEMU="$(
-        find "$BIGPEMU_DIR" \
-            -type f \
-            -name 'bigpemu' \
-            -print \
-            -quit
+    BIGPEMU_INSTALL_CANDIDATE="$(
+        mktemp -d "$BIGPEMU_PARENT/.bigpemu-install.XXXXXX"
     )"
 
-    if [[ -z "$INSTALLED_BIGPEMU" ]]; then
-        die "BigPEmu executable disappeared after installation."
+    chmod 0755 "$BIGPEMU_INSTALL_CANDIDATE"
+
+    if ! cp -a "$EXTRACT_DIR"/. "$BIGPEMU_INSTALL_CANDIDATE"/; then
+        rm -rf "$BIGPEMU_INSTALL_CANDIDATE"
+        rm -rf "$TEMP_DIR"
+        die "Could not stage the BigPEmu installation tree."
     fi
 
-    chmod +x "$INSTALLED_BIGPEMU"
+    BIGPEMU_CANDIDATE_EXEC="$BIGPEMU_INSTALL_CANDIDATE/bigpemu/bigpemu"
 
-    ln -s "$INSTALLED_BIGPEMU" "$BIGPEMU_LAUNCHER"
+    if [[ ! -f "$BIGPEMU_CANDIDATE_EXEC" ]]; then
+        rm -rf "$BIGPEMU_INSTALL_CANDIDATE"
+        rm -rf "$TEMP_DIR"
+        die "Staged BigPEmu executable is missing."
+    fi
 
+    chmod +x "$BIGPEMU_CANDIDATE_EXEC"
 
-    cat > "$BIGPEMU_DIR/VERSION.txt" <<EOF
+    BIGPEMU_CANDIDATE_EXEC_SHA256="$(
+        sha256sum "$BIGPEMU_CANDIDATE_EXEC" |
+            awk '{print $1}'
+    )"
+
+    if [[ "$BIGPEMU_CANDIDATE_EXEC_SHA256" != "$BIGPEMU_EXPECTED_EXEC_SHA256" ]]; then
+        rm -rf "$BIGPEMU_INSTALL_CANDIDATE"
+        rm -rf "$TEMP_DIR"
+        die "Extracted BigPEmu executable failed SHA-256 verification."
+    fi
+
+    cat > "$BIGPEMU_INSTALL_CANDIDATE/VERSION.txt" <<EOF
 BareFront managed emulator
 Emulator: BigPEmu
 Release: $BIGPEMU_VERSION
@@ -5085,7 +5123,22 @@ Source: https://www.richwhitehouse.com/jaguar/
 Linux archive: BigPEmu_Linux64_v1221.tar.gz
 Expected size: $BIGPEMU_EXPECTED_SIZE bytes
 Expected FNV-1a 64: $BIGPEMU_EXPECTED_FNV
+Expected executable SHA256: $BIGPEMU_EXPECTED_EXEC_SHA256
 EOF
+
+    if ! mv -T "$BIGPEMU_INSTALL_CANDIDATE" "$BIGPEMU_DIR"; then
+        rm -rf "$BIGPEMU_INSTALL_CANDIDATE"
+        rm -rf "$TEMP_DIR"
+        die "Could not promote the staged BigPEmu installation."
+    fi
+
+    rm -rf "$TEMP_DIR"
+
+    if [[ -e "$BIGPEMU_LAUNCHER" || -L "$BIGPEMU_LAUNCHER" ]]; then
+        die "Unexpected BigPEmu launcher path after fresh installation."
+    fi
+
+    ln -s "$BIGPEMU_UPSTREAM_EXEC" "$BIGPEMU_LAUNCHER"
 
     echo
     echo "BigPEmu installed."
@@ -5099,12 +5152,351 @@ fi
 echo
 echo "Verifying BigPEmu..."
 
-if [[ -L "$BIGPEMU_LAUNCHER" ]] && [[ -x "$BIGPEMU_LAUNCHER" ]]; then
-    echo "  BareFront launcher: OK"
-    echo "  $BIGPEMU_LAUNCHER"
-    echo "    -> $(readlink "$BIGPEMU_LAUNCHER")"
+if [[ ! -f "$BIGPEMU_UPSTREAM_EXEC" ]]; then
+    die "BigPEmu upstream executable is missing."
+fi
+
+BIGPEMU_FINAL_EXEC_SHA256="$(
+    sha256sum "$BIGPEMU_UPSTREAM_EXEC" |
+        awk '{print $1}'
+)"
+
+if [[ "$BIGPEMU_FINAL_EXEC_SHA256" != "$BIGPEMU_EXPECTED_EXEC_SHA256" ]]; then
+    die "Installed BigPEmu executable does not match the pinned SHA-256."
+fi
+
+echo "  Executable SHA-256: OK"
+
+if [[ ! -L "$BIGPEMU_LAUNCHER" ||
+      "$(readlink "$BIGPEMU_LAUNCHER" 2>/dev/null || true)" != "$BIGPEMU_UPSTREAM_EXEC" ||
+      ! -x "$BIGPEMU_LAUNCHER" ]]
+then
+    die "BigPEmu launcher-link verification failed."
+fi
+
+echo "  BareFront launcher: OK"
+echo "  $BIGPEMU_LAUNCHER"
+echo "    -> $(readlink "$BIGPEMU_LAUNCHER")"
+
+if [[ ! -f "$BIGPEMU_DIR/VERSION.txt" ]] ||
+   ! grep -q '^BareFront managed emulator$' "$BIGPEMU_DIR/VERSION.txt"
+then
+    die "BigPEmu managed-version marker verification failed."
+fi
+
+echo "  Managed version marker: OK"
+
+
+# ------------------------------------------------------------
+# BareFront BigPEmu Xbox controller baseline
+#
+# BigPEmu changes configuration location when BareFront launches
+# it with -localdata. The normal desktop configuration is therefore
+# deliberately separate from BareFront's private configuration.
+#
+# Fresh BareFront installs receive the live-tested Xbox Series X
+# baseline. Existing controller mappings are always preserved.
+#
+# Historical BareFront keyboard-only configs receive only the
+# missing controller triggers; every other setting is preserved.
+# ------------------------------------------------------------
+
+if [[ ! -s "$BIGPEMU_CONFIG_BASELINE" ]]; then
+    die "BigPEmu controller baseline is missing."
+fi
+
+BIGPEMU_CONFIG_BASELINE_ACTUAL_SHA256="$(
+    sha256sum "$BIGPEMU_CONFIG_BASELINE" |
+        awk '{print $1}'
+)"
+
+if [[ "$BIGPEMU_CONFIG_BASELINE_ACTUAL_SHA256" != "$BIGPEMU_CONFIG_BASELINE_SHA256" ]]; then
+    die "Unexpected BigPEmu controller baseline."
+fi
+
+
+# Validate the tracked baseline before using it.
+
+python3 - "$BIGPEMU_CONFIG_BASELINE" <<'PY_VALIDATE_BIGPEMU'
+import json
+import sys
+
+path = sys.argv[1]
+
+with open(path, "r", encoding="utf-8") as f:
+    cfg = json.load(f)
+
+input_cfg = cfg["BigPEmuConfig"]["Input"]
+bindings = input_cfg["Device0"]["Bindings"]
+
+keyboard = []
+controller = []
+
+for binding in bindings:
+    for trigger in binding.get("Triggers", []):
+        if trigger.get("B_KB") is False:
+            controller.append(trigger)
+        elif trigger.get("B_KB") is True:
+            keyboard.append(trigger)
+
+if input_cfg.get("DeviceCount") != 2:
+    raise SystemExit(
+        "Unexpected BigPEmu baseline DeviceCount"
+    )
+
+if len(keyboard) != 24:
+    raise SystemExit(
+        "Unexpected BigPEmu baseline keyboard trigger count"
+    )
+
+if len(controller) != 32:
+    raise SystemExit(
+        "Unexpected BigPEmu baseline controller trigger count"
+    )
+
+device_ids = set()
+
+for trigger in controller:
+    if trigger.get("B_DevID"):
+        device_ids.add(trigger["B_DevID"])
+
+    if trigger.get("M_DevID"):
+        device_ids.add(trigger["M_DevID"])
+
+expected_ids = {
+    "0600B7925E040000120B000001050000"
+}
+
+if device_ids != expected_ids:
+    raise SystemExit(
+        "Unexpected BigPEmu Xbox controller GUID"
+    )
+
+if cfg["BigPEmuConfig"].get("RecentFiles") != []:
+    raise SystemExit(
+        "BigPEmu baseline contains recent-file history"
+    )
+
+if cfg["BigPEmuConfig"].get("SetCart") not in (None, ""):
+    raise SystemExit(
+        "BigPEmu baseline contains cartridge history"
+    )
+
+if cfg["BigPEmuConfig"].get("SetDisc") not in (None, ""):
+    raise SystemExit(
+        "BigPEmu baseline contains disc history"
+    )
+PY_VALIDATE_BIGPEMU
+
+
+mkdir -p "$BIGPEMU_USERDATA_DIR"
+
+
+if [[ ! -e "$BIGPEMU_CONFIG" ]]; then
+
+    install \
+        -m 0644 \
+        "$BIGPEMU_CONFIG_BASELINE" \
+        "$BIGPEMU_CONFIG"
+
+    echo "  BigPEmu Xbox controller baseline: CREATED"
+
+
+elif [[ ! -f "$BIGPEMU_CONFIG" || -L "$BIGPEMU_CONFIG" ]]; then
+
+    die "Unexpected BigPEmu configuration path."
+
+
 else
-    die "BigPEmu installation verification failed."
+
+    BIGPEMU_CONFIG_TEMP="$(
+        mktemp \
+            "$BIGPEMU_USERDATA_DIR/.BigPEmuConfig.controller.XXXXXX"
+    )"
+
+    if ! BIGPEMU_CONFIG_ACTION="$(
+        python3 - \
+            "$BIGPEMU_CONFIG" \
+            "$BIGPEMU_CONFIG_BASELINE" \
+            "$BIGPEMU_CONFIG_TEMP" <<'PY_MIGRATE_BIGPEMU'
+import copy
+import json
+import sys
+
+existing_path, baseline_path, output_path = sys.argv[1:4]
+
+with open(existing_path, "r", encoding="utf-8") as f:
+    existing = json.load(f)
+
+with open(baseline_path, "r", encoding="utf-8") as f:
+    baseline = json.load(f)
+
+existing_input = existing["BigPEmuConfig"]["Input"]
+baseline_input = baseline["BigPEmuConfig"]["Input"]
+
+
+def controller_triggers(input_cfg):
+    result = []
+
+    for key, device in input_cfg.items():
+
+        if not key.startswith("Device"):
+            continue
+
+        if not isinstance(device, dict):
+            continue
+
+        for binding in device.get("Bindings", []):
+
+            for trigger in binding.get("Triggers", []):
+
+                if trigger.get("B_KB") is False:
+                    result.append(trigger)
+
+    return result
+
+
+# Existing controller configuration always wins.
+
+if controller_triggers(existing_input):
+    print("PRESERVE")
+    raise SystemExit(0)
+
+
+existing_bindings = existing_input["Device0"]["Bindings"]
+baseline_bindings = baseline_input["Device0"]["Bindings"]
+
+if len(existing_bindings) != len(baseline_bindings):
+    print("INCOMPATIBLE")
+    raise SystemExit(0)
+
+
+before = copy.deepcopy(existing)
+
+
+for index, baseline_binding in enumerate(baseline_bindings):
+
+    additions = [
+        copy.deepcopy(trigger)
+        for trigger in baseline_binding.get("Triggers", [])
+        if trigger.get("B_KB") is False
+    ]
+
+    existing_bindings[index].setdefault(
+        "Triggers",
+        []
+    ).extend(additions)
+
+
+def without_controller_triggers(obj):
+    obj = copy.deepcopy(obj)
+    input_cfg = obj["BigPEmuConfig"]["Input"]
+
+    for key, device in input_cfg.items():
+
+        if not key.startswith("Device"):
+            continue
+
+        if not isinstance(device, dict):
+            continue
+
+        for binding in device.get("Bindings", []):
+
+            binding["Triggers"] = [
+                trigger
+                for trigger in binding.get("Triggers", [])
+                if trigger.get("B_KB") is not False
+            ]
+
+    return obj
+
+
+if without_controller_triggers(before) != without_controller_triggers(existing):
+    raise SystemExit(
+        "BigPEmu migration changed unrelated configuration"
+    )
+
+
+if len(controller_triggers(existing_input)) != 32:
+    raise SystemExit(
+        "Unexpected BigPEmu controller trigger count after migration"
+    )
+
+
+with open(output_path, "w", encoding="utf-8") as f:
+    json.dump(existing, f, indent=4)
+    f.write("\n")
+
+
+print("MIGRATE")
+PY_MIGRATE_BIGPEMU
+    )"
+    then
+
+        rm -f -- "$BIGPEMU_CONFIG_TEMP"
+        die "BigPEmu controller migration failed."
+
+    fi
+
+
+    case "$BIGPEMU_CONFIG_ACTION" in
+
+        PRESERVE)
+
+            rm -f -- "$BIGPEMU_CONFIG_TEMP"
+
+            echo \
+                "  BigPEmu controller mapping already exists: PRESERVED"
+            ;;
+
+
+        MIGRATE)
+
+            chmod \
+                --reference="$BIGPEMU_CONFIG" \
+                "$BIGPEMU_CONFIG_TEMP"
+
+            chown \
+                --reference="$BIGPEMU_CONFIG" \
+                "$BIGPEMU_CONFIG_TEMP"
+
+            if ! mv -fT \
+                "$BIGPEMU_CONFIG_TEMP" \
+                "$BIGPEMU_CONFIG"
+            then
+                rm -f -- "$BIGPEMU_CONFIG_TEMP"
+                die \
+                    "Could not migrate the BigPEmu controller mapping."
+            fi
+
+            echo \
+                "  BigPEmu Xbox controller baseline: MIGRATED"
+            ;;
+
+
+        INCOMPATIBLE)
+
+            rm -f -- "$BIGPEMU_CONFIG_TEMP"
+
+            echo \
+                "  WARNING: existing BigPEmu input layout is not"
+            echo \
+                "           compatible with BareFront's baseline."
+            echo \
+                "           Existing configuration: PRESERVED"
+            ;;
+
+
+        *)
+
+            rm -f -- "$BIGPEMU_CONFIG_TEMP"
+
+            die \
+                "Unexpected BigPEmu controller migration result."
+            ;;
+
+    esac
+
 fi
 
 
@@ -5142,10 +5534,25 @@ if [[ ! -x "$BIGPEMU_ESC_HELPER" ]] || \
 then
     echo "Building BigPEmu Esc helper..."
 
-    g++ -std=c++17 -O2 \
+    BIGPEMU_ESC_TEMP="$(
+        mktemp "$BIGPEMU_DIR/.bigpemu-esc.XXXXXX"
+    )"
+
+    if ! g++ -std=c++17 -O2 \
         "$BIGPEMU_ESC_SOURCE" \
-        -o "$BIGPEMU_ESC_HELPER" \
+        -o "$BIGPEMU_ESC_TEMP" \
         -lX11
+    then
+        rm -f -- "$BIGPEMU_ESC_TEMP"
+        die "BigPEmu Esc helper compilation failed."
+    fi
+
+    chmod 0755 "$BIGPEMU_ESC_TEMP"
+
+    if ! mv -fT -- "$BIGPEMU_ESC_TEMP" "$BIGPEMU_ESC_HELPER"; then
+        rm -f -- "$BIGPEMU_ESC_TEMP"
+        die "Could not promote the BigPEmu Esc helper."
+    fi
 
     echo "Action: BUILD"
 else
@@ -5158,25 +5565,25 @@ if [[ ! -x "$BIGPEMU_ESC_HELPER" ]]; then
 fi
 
 # ------------------------------------------------------------
-# BigPEmu Xbox Guide exit helper
+# BigPEmu Xbox Share exit helper
 # ------------------------------------------------------------
 
 if [[ ! -f "$BIGPEMU_GUIDE_SOURCE" ]]; then
-    die "BigPEmu Guide helper source is missing."
+    die "BigPEmu Share helper source is missing."
 fi
 
 if ! command -v g++ >/dev/null 2>&1 ||
    ! command -v pkg-config >/dev/null 2>&1 ||
    ! pkg-config --exists sdl2
 then
-    die "BigPEmu Guide helper build dependencies are missing."
+    die "BigPEmu Share helper build dependencies are missing."
 fi
 
 if [[ ! -x "$BIGPEMU_GUIDE_HELPER" ]] ||
    [[ "$BIGPEMU_GUIDE_SOURCE" -nt "$BIGPEMU_GUIDE_HELPER" ]]
 then
     echo
-    echo "Building BigPEmu Xbox Guide helper..."
+    echo "Building BigPEmu Xbox Share helper..."
 
     BIGPEMU_GUIDE_TEMP="$(mktemp "$BIGPEMU_DIR/.bigpemu-guide.XXXXXX")"
 
@@ -5186,19 +5593,23 @@ then
         $(pkg-config --cflags --libs sdl2)
     then
         rm -f -- "$BIGPEMU_GUIDE_TEMP"
-        die "BigPEmu Guide helper compilation failed."
+        die "BigPEmu Share helper compilation failed."
     fi
 
     chmod 0755 "$BIGPEMU_GUIDE_TEMP"
-    mv -f -- "$BIGPEMU_GUIDE_TEMP" "$BIGPEMU_GUIDE_HELPER"
 
-    echo "BigPEmu Xbox Guide helper built."
+    if ! mv -fT -- "$BIGPEMU_GUIDE_TEMP" "$BIGPEMU_GUIDE_HELPER"; then
+        rm -f -- "$BIGPEMU_GUIDE_TEMP"
+        die "Could not promote the BigPEmu Share helper."
+    fi
+
+    echo "BigPEmu Xbox Share helper built."
 else
-    echo "BigPEmu Xbox Guide helper already built."
+    echo "BigPEmu Xbox Share helper already built."
 fi
 
 if [[ ! -x "$BIGPEMU_GUIDE_HELPER" ]]; then
-    die "BigPEmu Guide helper verification failed."
+    die "BigPEmu Share helper verification failed."
 fi
 
 echo
@@ -5207,7 +5618,7 @@ echo "  $BIGPEMU_WRAPPER"
 echo
 echo "BareFront-owned controls:"
 echo "  Esc = return directly to BareFront"
-echo "  Xbox Guide = return directly to BareFront"
+echo "  Xbox Share = return directly to BareFront"
 
 echo
 echo "BigPEmu needs no mandatory Jaguar BIOS for normal"
