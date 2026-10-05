@@ -1064,7 +1064,7 @@ fi
 
 
 # ------------------------------------------------------------
-# Stella Guide exit helper — Xbox Guide
+# Stella Share exit helper — Xbox Share
 # ------------------------------------------------------------
 
 STELLA_GUIDE_SOURCE="$BAREFRONT_DIR/src/stella_guide_exit_helper.cpp"
@@ -1072,13 +1072,13 @@ STELLA_GUIDE_DIR="$BAREFRONT_DIR/emulators/stella"
 STELLA_GUIDE_HELPER="$STELLA_GUIDE_DIR/stella_guide_exit_helper"
 
 if [[ ! -f "$STELLA_GUIDE_SOURCE" ]]; then
-    die "Stella Guide helper source is missing: $STELLA_GUIDE_SOURCE"
+    die "Stella Share helper source is missing: $STELLA_GUIDE_SOURCE"
 fi
 
 if ! command -v g++ >/dev/null 2>&1 ||
    ! command -v sdl2-config >/dev/null 2>&1
 then
-    die "Stella Guide helper build dependencies are missing."
+    die "Stella Share helper build dependencies are missing."
 fi
 
 mkdir -p "$STELLA_GUIDE_DIR"
@@ -1087,7 +1087,7 @@ if [[ ! -x "$STELLA_GUIDE_HELPER" ]] ||
    [[ "$STELLA_GUIDE_SOURCE" -nt "$STELLA_GUIDE_HELPER" ]]
 then
     echo
-    echo "Building Stella Xbox Guide exit helper..."
+    echo "Building Stella Xbox Share exit helper..."
 
     STELLA_GUIDE_CANDIDATE="$(
         mktemp "$STELLA_GUIDE_DIR/.stella-guide-build.XXXXXX"
@@ -1100,7 +1100,7 @@ then
         -lX11 -lXtst
     then
         rm -f -- "$STELLA_GUIDE_CANDIDATE"
-        die "Stella Guide helper compilation failed."
+        die "Stella Share helper compilation failed."
     fi
 
     chmod 755 "$STELLA_GUIDE_CANDIDATE"
@@ -1109,12 +1109,12 @@ then
     echo "Action: BUILD"
 else
     echo
-    echo "Stella Guide exit helper is already current."
+    echo "Stella Share exit helper is already current."
     echo "Action: SKIP"
 fi
 
 if [[ ! -x "$STELLA_GUIDE_HELPER" ]]; then
-    die "Stella Guide exit helper build failed."
+    die "Stella Share exit helper build failed."
 fi
 
 
@@ -1342,8 +1342,10 @@ if [[ "$FAILED_COUNT" -gt 0 ]]; then
 fi
 
 if [[ "$SKIPPED_SPECIAL" -gt 0 ]]; then
-    echo "Stage 3A completed with one expected special case."
-    echo "VICE remains incomplete because contrib was not enabled or available."
+    echo "Stage 3A cannot complete."
+    echo "VICE is required for Commodore 64 support."
+    echo "Enable Debian contrib and rerun the installer."
+    exit 1
 else
     echo "Stage 3A completed successfully."
 fi
