@@ -8193,7 +8193,7 @@ switch (action)
             drawText(
                 renderer,
                 homeFooterFont,
-                "ARROWS Select",
+                "D-PAD - Move",
                 65,
                 665,
                 grey
@@ -8203,8 +8203,8 @@ switch (action)
             drawText(
                 renderer,
                 homeFooterFont,
-                "ENTER Open",
-                465,
+                "A - Select",
+                440,
                 665,
                 grey
             );
@@ -8213,8 +8213,8 @@ switch (action)
             drawText(
                 renderer,
                 homeFooterFont,
-                "ESC Quit",
-                860,
+                "Hold MENU + VIEW - Exit",
+                760,
                 665,
                 grey
             );
@@ -8369,6 +8369,37 @@ switch (action)
                     white
                 );
             }
+
+            // ----------------------------------------------
+            // Collections footer
+            // ----------------------------------------------
+
+            drawText(
+                renderer,
+                gameFont,
+                "D-PAD - Move",
+                64,
+                665,
+                grey
+            );
+
+            drawText(
+                renderer,
+                gameFont,
+                "A - Select",
+                500,
+                665,
+                grey
+            );
+
+            drawText(
+                renderer,
+                gameFont,
+                "B - Back",
+                930,
+                665,
+                grey
+            );
         }
 
 
@@ -8938,7 +8969,7 @@ switch (action)
             drawText(
                 renderer,
                 gameFont,
-                "UP/DOWN Select",
+                "D-PAD - Move",
                 64,
                 678,
                 grey
@@ -8948,8 +8979,18 @@ switch (action)
             drawText(
                 renderer,
                 gameFont,
-                "ENTER Play",
-                860,
+                "A - Play",
+                500,
+                678,
+                grey
+            );
+
+
+            drawText(
+                renderer,
+                gameFont,
+                "B - Back",
+                930,
                 678,
                 grey
             );
