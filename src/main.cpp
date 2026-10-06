@@ -7885,7 +7885,11 @@ switch (action)
                     }
 
                     useTatePreview =
-                        false;
+                        !games.empty() &&
+                        determineTatePreview(
+                            systems[activeSystemIndex],
+                            games[gameSelected]
+                        );
 
                     previewPending =
                         !games.empty();
@@ -8819,25 +8823,28 @@ switch (action)
                 // the original CRT aspect ratio here means the
                 // rotated cabinet remains correctly proportioned.
                 //
-                // Before rotation: 380 x 297
-                // Visible after rotation: roughly 297 x 380
+                // Before rotation: 380 x 320
+                // Visible after rotation: roughly 320 x 380.
                 //
-                // This keeps it clear of the footer and console art.
+                // The slightly wider cabinet gives portrait games
+                // more visual presence without stretching the media.
+                // It remains clear of the footer and console art.
                 tvArea =
                 {
                     815,
-                    285,
+                    274,
                     380,
-                    297
+                    320
                 };
 
-                // Rotated equivalent of the normal CRT screen opening.
-                // The gameplay itself remains upright.
+                // Rotated equivalent of the CRT screen opening.
+                // The opening is widened with the cabinet, while
+                // gameplay itself keeps its original aspect ratio.
                 screenArea =
                 {
-                    914,
+                    906,
                     283,
-                    188,
+                    204,
                     250
                 };
             }
@@ -8946,8 +8953,12 @@ switch (action)
                     );
                 }
 
-                // A few brighter horizontal streaks give the
-                // burst a more convincing old-TV tuning feel.
+                // A few brighter tuning streaks give the burst
+                // a more convincing old-TV feel.
+                //
+                // Rotate the directional part of the effect with
+                // the TATE monitor. The random snow itself needs no
+                // rotation because its speckles are orientation-neutral.
                 for (int i = 0;
                      i < 5;
                      ++i)
@@ -8955,15 +8966,6 @@ switch (action)
                     noise =
                         noise * 1664525u +
                         1013904223u;
-
-                    const int lineY =
-                        screenArea.y +
-                        static_cast<int>(
-                            noise %
-                            static_cast<Uint32>(
-                                screenArea.h
-                            )
-                        );
 
                     SDL_SetRenderDrawColor(
                         renderer,
@@ -8973,14 +8975,46 @@ switch (action)
                         180
                     );
 
-                    SDL_RenderDrawLine(
-                        renderer,
-                        screenArea.x,
-                        lineY,
-                        screenArea.x +
-                            screenArea.w - 1,
-                        lineY
-                    );
+                    if (tateNow)
+                    {
+                        const int lineX =
+                            screenArea.x +
+                            static_cast<int>(
+                                noise %
+                                static_cast<Uint32>(
+                                    screenArea.w
+                                )
+                            );
+
+                        SDL_RenderDrawLine(
+                            renderer,
+                            lineX,
+                            screenArea.y,
+                            lineX,
+                            screenArea.y +
+                                screenArea.h - 1
+                        );
+                    }
+                    else
+                    {
+                        const int lineY =
+                            screenArea.y +
+                            static_cast<int>(
+                                noise %
+                                static_cast<Uint32>(
+                                    screenArea.h
+                                )
+                            );
+
+                        SDL_RenderDrawLine(
+                            renderer,
+                            screenArea.x,
+                            lineY,
+                            screenArea.x +
+                                screenArea.w - 1,
+                            lineY
+                        );
+                    }
                 }
             }
             else if (videoPlayer.hasFrame())
