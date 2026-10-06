@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<mamelayout version="2">
+
+    <!--
+        BAREFRONT VECTOR — VERTICAL TEMPLATE
+
+        Output canvas: 1920 x 1080
+        Monitor:       3:4
+        Screen:        720 x 960
+        Position:      x=600, y=60
+
+        Layout only.
+        No bezel.
+        No backdrop.
+        No overlay.
+        No PNG assets.
+    -->
+
+    <view name="BareFront Vector Vertical">
+
+        <bounds x="0" y="0" width="1920" height="1080"/>
+
+        <screen index="0">
+            <bounds x="600" y="60" width="720" height="960"/>
+        </screen>
+
+    </view>
+
+</mamelayout>
