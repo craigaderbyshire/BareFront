@@ -551,6 +551,10 @@ struct System
     std::string arguments;
 
     SDL_Texture* texture = nullptr;
+
+    // Home-screen availability.
+    // Empty systems remain visible, but are drawn dimmed.
+    bool hasGames = true;
 };
 
 
@@ -3067,6 +3071,72 @@ std::vector<fs::path> scanGames(
 
 
 // --------------------------------------------------
+// Test whether a system contains any supported game media.
+//
+// The home screen only needs a yes/no answer, so do not
+// build the complete curated library here.  Stop at the
+// first supported file found anywhere beneath the configured
+// ROM root.  The full scanGames() rules still run normally
+// when the user opens the system.
+// --------------------------------------------------
+
+bool systemHasGames(
+    const System& system)
+{
+    if (!fs::exists(system.romFolder) ||
+        !fs::is_directory(system.romFolder))
+    {
+        return false;
+    }
+
+    try
+    {
+        for (const auto& entry :
+             fs::recursive_directory_iterator(
+                 system.romFolder,
+                 fs::directory_options::skip_permission_denied))
+        {
+            if (!entry.is_regular_file())
+                continue;
+
+            std::string extension =
+                entry.path()
+                    .extension()
+                    .string();
+
+            std::transform(
+                extension.begin(),
+                extension.end(),
+                extension.begin(),
+                [](unsigned char c)
+                {
+                    return static_cast<char>(
+                        std::tolower(c)
+                    );
+                }
+            );
+
+            if (std::find(
+                    system.romExtensions.begin(),
+                    system.romExtensions.end(),
+                    extension
+                ) != system.romExtensions.end())
+            {
+                return true;
+            }
+        }
+    }
+    catch (const fs::filesystem_error&)
+    {
+        // An unavailable or unreadable library behaves as empty
+        // on the home screen. Opening systems remains unchanged.
+    }
+
+    return false;
+}
+
+
+// --------------------------------------------------
 // Load a normal UI texture
 // --------------------------------------------------
 
@@ -3855,11 +3925,32 @@ void drawHomePage(
             175
         };
 
+        const Uint8 contentAlpha =
+            systems[globalIndex].hasGames
+                ? 255
+                : 64;
+
+        if (systems[globalIndex].texture)
+        {
+            SDL_SetTextureAlphaMod(
+                systems[globalIndex].texture,
+                contentAlpha
+            );
+        }
+
         drawTextureContained(
             renderer,
             systems[globalIndex].texture,
             imageArea
         );
+
+        if (systems[globalIndex].texture)
+        {
+            SDL_SetTextureAlphaMod(
+                systems[globalIndex].texture,
+                255
+            );
+        }
 
 
         SDL_Rect nameArea =
@@ -3870,12 +3961,18 @@ void drawHomePage(
             42
         };
 
+        SDL_Color systemColour =
+            white;
+
+        systemColour.a =
+            contentAlpha;
+
         drawTextCentered(
             renderer,
             systemFont,
             systems[globalIndex].name,
             nameArea,
-            white
+            systemColour
         );
     }
 }
@@ -5946,6 +6043,22 @@ int main()
         "barefront.ini",
         systems
     );
+
+
+    // --------------------------------------------------
+    // Cache home-screen library availability.
+    //
+    // This runs once after configured ROM paths are resolved.
+    // Empty systems remain visible; only their presentation
+    // changes.
+    // --------------------------------------------------
+
+    for (System& system :
+         systems)
+    {
+        system.hasGames =
+            systemHasGames(system);
+    }
 
 
     // --------------------------------------------------
