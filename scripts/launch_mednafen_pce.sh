@@ -55,12 +55,6 @@ if [[ ! -x "$CONTROL_HELPER" ]]; then
 fi
 
 
-if ! command -v pasuspender >/dev/null 2>&1; then
-    echo "pasuspender not found." >&2
-    exit 1
-fi
-
-
 if [[ ! -f "$PROFILE/mednafen.cfg" ]]; then
     echo "BareFront PC Engine profile not found:" >&2
     echo "  $PROFILE/mednafen.cfg" >&2
@@ -84,22 +78,6 @@ if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
     export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 fi
 
-
-AUDIO_HELPER="$ROOT/scripts/barefront_audio.sh"
-
-if [[ ! -f "$AUDIO_HELPER" ]]; then
-    echo "BareFront audio helper not found:" >&2
-    echo "  $AUDIO_HELPER" >&2
-    exit 1
-fi
-
-source "$AUDIO_HELPER"
-
-if ! barefront_audio_resolve; then
-    exit 1
-fi
-
-AUDIO_DEVICE="$BAREFRONT_MEDNAFEN_DEVICE"
 
 SHADER="NONE"
 
@@ -191,7 +169,7 @@ echo "  Integer:     ${INTEGER_SCALE}x"
 echo "  Output:      ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}"
 echo "  Filter:      nearest"
 echo "  Shader:      $SHADER"
-barefront_audio_log
+echo "  Audio:       SDL -> system default"
 
 
 SESSION_DIR="$(mktemp -d /tmp/barefront-pcengine.XXXXXX)"
@@ -215,8 +193,7 @@ trap cleanup EXIT
 
 echo "  Session logs: $SESSION_DIR"
 
-pasuspender -- \
-    "${LAUNCH_ENV[@]}" \
+"${LAUNCH_ENV[@]}" \
         "$GAMESCOPE" \
             -b \
             -w "$NATIVE_WIDTH" \
@@ -238,8 +215,8 @@ pasuspender -- \
                     -pce_fast.correct_aspect 0 \
                     -pce_fast.xscale 1 \
                     -pce_fast.yscale 1 \
-                    -sound.driver alsa \
-                    -sound.device "$AUDIO_DEVICE" \
+                    -sound.driver sdl \
+                    -sound.device default \
                     -sound.rate 48000 \
                     -sound.buffer_time 20 \
                     -video.fs 0 \

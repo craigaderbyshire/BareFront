@@ -3412,6 +3412,66 @@ bool loadSoundEffect(
     }
 
 
+    // Keep BareFront UI feedback audible without letting the
+    // navigation click dominate normal game/menu listening levels.
+    constexpr int clickVolume =
+        SDL_MIX_MAXVOLUME / 4;
+
+    Uint8* attenuatedBuffer =
+        static_cast<Uint8*>(
+            SDL_malloc(
+                sound.length
+            )
+        );
+
+    if (!attenuatedBuffer)
+    {
+        SDL_free(
+            sound.buffer
+        );
+
+        sound.buffer =
+            nullptr;
+
+        sound.length =
+            0;
+
+        SDL_CloseAudioDevice(
+            sound.device
+        );
+
+        sound.device =
+            0;
+
+        SDL_FreeWAV(
+            sourceBuffer
+        );
+
+        return false;
+    }
+
+    SDL_memset(
+        attenuatedBuffer,
+        0,
+        sound.length
+    );
+
+    SDL_MixAudioFormat(
+        attenuatedBuffer,
+        sound.buffer,
+        obtainedSpec.format,
+        sound.length,
+        clickVolume
+    );
+
+    SDL_free(
+        sound.buffer
+    );
+
+    sound.buffer =
+        attenuatedBuffer;
+
+
     SDL_FreeWAV(
         sourceBuffer
     );

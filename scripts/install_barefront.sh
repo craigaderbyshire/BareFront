@@ -1370,8 +1370,6 @@ MEDNAFEN_MD_CONTROL_HELPER="$MEDNAFEN_MD_LOCAL_DIR/megadrive_controller_helper"
 MEDNAFEN_MD_PROFILE="$BAREFRONT_DIR/saves/megadrive/mednafen"
 MEDNAFEN_MD_CONFIG="$MEDNAFEN_MD_PROFILE/mednafen.cfg"
 
-BAREFRONT_AUDIO_HELPER="$BAREFRONT_DIR/scripts/barefront_audio.sh"
-
 MEDNAFEN_MD_BARECRT_DIR="$BAREFRONT_DIR/assets/shaders/barecrt"
 MEDNAFEN_MD_BARECRT_SHADER="$MEDNAFEN_MD_BARECRT_DIR/BareCRT_v2.fx"
 MEDNAFEN_MD_RESHADE_INCLUDE="$MEDNAFEN_MD_BARECRT_DIR/ReShade.fxh"
@@ -1394,24 +1392,6 @@ chmod +x "$MEDNAFEN_MD_LAUNCHER"
 
 if [[ ! -x "$MEDNAFEN_MD_LAUNCHER" ]]; then
     die "Mega Drive launcher is not executable."
-fi
-
-if [[ ! -f "$BAREFRONT_AUDIO_HELPER" ]]; then
-    die "BareFront shared audio helper is missing: $BAREFRONT_AUDIO_HELPER"
-fi
-
-if ! bash -n "$BAREFRONT_AUDIO_HELPER"; then
-    die "BareFront shared audio helper failed syntax validation."
-fi
-
-echo "BareFront shared audio helper: OK"
-
-if ! command -v pactl >/dev/null 2>&1; then
-    die "Mega Drive direct-HDMI audio requires pactl."
-fi
-
-if ! command -v pasuspender >/dev/null 2>&1; then
-    die "Mega Drive direct-HDMI audio requires pasuspender."
 fi
 
 if [[ ! -x "$GAMESCOPE_EXE" ]]; then
@@ -4863,7 +4843,7 @@ BIGPEMU_OVERLAY="$BAREFRONT_DIR/assets/overlays/jaguar.png"
 BIGPEMU_CONFIG_BASELINE="$BAREFRONT_DIR/assets/config/bigpemu/BigPEmuConfig.bigpcfg"
 BIGPEMU_USERDATA_DIR="$BIGPEMU_DIR/bigpemu/bigpemu_userdata"
 BIGPEMU_CONFIG="$BIGPEMU_USERDATA_DIR/BigPEmuConfig.bigpcfg"
-BIGPEMU_CONFIG_BASELINE_SHA256="d74d6075c01b009f77cbededa874633d53ecfed872250800e7d8af3de0ecab65"
+BIGPEMU_CONFIG_BASELINE_SHA256="eaafc829ec705351e10d799dc23922a80195f10caa4800fa4cc329410d7650ff"
 
 # BigPEmu does not currently publish releases through a package
 # manager or machine-readable release API.
@@ -5188,21 +5168,24 @@ echo "  Managed version marker: OK"
 
 
 # ------------------------------------------------------------
-# BareFront BigPEmu Xbox controller baseline
+# BareFront BigPEmu portable keyboard baseline
 #
 # BigPEmu changes configuration location when BareFront launches
 # it with -localdata. The normal desktop configuration is therefore
 # deliberately separate from BareFront's private configuration.
 #
-# Fresh BareFront installs receive the live-tested Xbox Series X
-# baseline. Existing controller mappings are always preserved.
+# Fresh BareFront installs receive a controller-independent keyboard
+# baseline. BareFront's SDL helper translates normalized controller
+# input to these keys, so BigPEmu does not depend on a host-specific
+# SDL controller GUID.
 #
-# Historical BareFront keyboard-only configs receive only the
-# missing controller triggers; every other setting is preserved.
+# The exact historical BareFront Xbox mapping is safely removed from
+# existing configurations. Any other/custom controller mapping is
+# preserved untouched.
 # ------------------------------------------------------------
 
 if [[ ! -s "$BIGPEMU_CONFIG_BASELINE" ]]; then
-    die "BigPEmu controller baseline is missing."
+    die "BigPEmu input baseline is missing."
 fi
 
 BIGPEMU_CONFIG_BASELINE_ACTUAL_SHA256="$(
@@ -5211,11 +5194,11 @@ BIGPEMU_CONFIG_BASELINE_ACTUAL_SHA256="$(
 )"
 
 if [[ "$BIGPEMU_CONFIG_BASELINE_ACTUAL_SHA256" != "$BIGPEMU_CONFIG_BASELINE_SHA256" ]]; then
-    die "Unexpected BigPEmu controller baseline."
+    die "Unexpected BigPEmu input baseline."
 fi
 
 
-# Validate the tracked baseline before using it.
+# Validate the tracked portable baseline before using it.
 
 python3 - "$BIGPEMU_CONFIG_BASELINE" <<'PY_VALIDATE_BIGPEMU'
 import json
@@ -5227,17 +5210,35 @@ with open(path, "r", encoding="utf-8") as f:
     cfg = json.load(f)
 
 input_cfg = cfg["BigPEmuConfig"]["Input"]
-bindings = input_cfg["Device0"]["Bindings"]
 
 keyboard = []
 controller = []
+device_ids = set()
 
-for binding in bindings:
-    for trigger in binding.get("Triggers", []):
-        if trigger.get("B_KB") is False:
-            controller.append(trigger)
-        elif trigger.get("B_KB") is True:
-            keyboard.append(trigger)
+for key, device in input_cfg.items():
+
+    if not key.startswith("Device"):
+        continue
+
+    if not isinstance(device, dict):
+        continue
+
+    for binding in device.get("Bindings", []):
+
+        for trigger in binding.get("Triggers", []):
+
+            if trigger.get("B_KB") is True:
+                keyboard.append(trigger)
+
+            elif trigger.get("B_KB") is False:
+                controller.append(trigger)
+
+            for field in ("B_DevID", "M_DevID"):
+                value = trigger.get(field)
+
+                if value:
+                    device_ids.add(value)
+
 
 if input_cfg.get("DeviceCount") != 2:
     raise SystemExit(
@@ -5249,27 +5250,14 @@ if len(keyboard) != 24:
         "Unexpected BigPEmu baseline keyboard trigger count"
     )
 
-if len(controller) != 32:
+if controller:
     raise SystemExit(
-        "Unexpected BigPEmu baseline controller trigger count"
+        "BigPEmu portable baseline contains controller triggers"
     )
 
-device_ids = set()
-
-for trigger in controller:
-    if trigger.get("B_DevID"):
-        device_ids.add(trigger["B_DevID"])
-
-    if trigger.get("M_DevID"):
-        device_ids.add(trigger["M_DevID"])
-
-expected_ids = {
-    "0600B7925E040000120B000001050000"
-}
-
-if device_ids != expected_ids:
+if device_ids:
     raise SystemExit(
-        "Unexpected BigPEmu Xbox controller GUID"
+        "BigPEmu portable baseline contains device-specific IDs"
     )
 
 if cfg["BigPEmuConfig"].get("RecentFiles") != []:
@@ -5299,7 +5287,7 @@ if [[ ! -e "$BIGPEMU_CONFIG" ]]; then
         "$BIGPEMU_CONFIG_BASELINE" \
         "$BIGPEMU_CONFIG"
 
-    echo "  BigPEmu Xbox controller baseline: CREATED"
+    echo "  BigPEmu portable input baseline: CREATED"
 
 
 elif [[ ! -f "$BIGPEMU_CONFIG" || -L "$BIGPEMU_CONFIG" ]]; then
@@ -5311,7 +5299,7 @@ else
 
     BIGPEMU_CONFIG_TEMP="$(
         mktemp \
-            "$BIGPEMU_USERDATA_DIR/.BigPEmuConfig.controller.XXXXXX"
+            "$BIGPEMU_USERDATA_DIR/.BigPEmuConfig.input.XXXXXX"
     )"
 
     if ! BIGPEMU_CONFIG_ACTION="$(
@@ -5320,77 +5308,62 @@ else
             "$BIGPEMU_CONFIG_BASELINE" \
             "$BIGPEMU_CONFIG_TEMP" <<'PY_MIGRATE_BIGPEMU'
 import copy
+import hashlib
 import json
 import sys
 
-existing_path, baseline_path, output_path = sys.argv[1:4]
+existing_path, _baseline_path, output_path = sys.argv[1:4]
+
+OLD_CONTROLLER_SIGNATURE = (
+    "c81f4074298048cbb7f5998fd5a63ace"
+    "515210d5a0e4af13f5ab638b79eb31f2"
+)
 
 with open(existing_path, "r", encoding="utf-8") as f:
     existing = json.load(f)
 
-with open(baseline_path, "r", encoding="utf-8") as f:
-    baseline = json.load(f)
 
-existing_input = existing["BigPEmuConfig"]["Input"]
-baseline_input = baseline["BigPEmuConfig"]["Input"]
-
-
-def controller_triggers(input_cfg):
+def controller_entries(cfg):
     result = []
 
-    for key, device in input_cfg.items():
+    input_cfg = cfg["BigPEmuConfig"]["Input"]
 
-        if not key.startswith("Device"):
-            continue
+    for device_name in sorted(
+        key
+        for key in input_cfg
+        if key.startswith("Device")
+        and isinstance(input_cfg[key], dict)
+    ):
+        device = input_cfg[device_name]
 
-        if not isinstance(device, dict):
-            continue
-
-        for binding in device.get("Bindings", []):
-
+        for binding_index, binding in enumerate(
+            device.get("Bindings", [])
+        ):
             for trigger in binding.get("Triggers", []):
 
                 if trigger.get("B_KB") is False:
-                    result.append(trigger)
+                    result.append({
+                        "device": device_name,
+                        "binding": binding_index,
+                        "trigger": trigger,
+                    })
 
     return result
 
 
-# Existing controller configuration always wins.
+def controller_signature(cfg):
+    canonical = json.dumps(
+        controller_entries(cfg),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
 
-if controller_triggers(existing_input):
-    print("PRESERVE")
-    raise SystemExit(0)
-
-
-existing_bindings = existing_input["Device0"]["Bindings"]
-baseline_bindings = baseline_input["Device0"]["Bindings"]
-
-if len(existing_bindings) != len(baseline_bindings):
-    print("INCOMPATIBLE")
-    raise SystemExit(0)
+    return hashlib.sha256(canonical).hexdigest()
 
 
-before = copy.deepcopy(existing)
-
-
-for index, baseline_binding in enumerate(baseline_bindings):
-
-    additions = [
-        copy.deepcopy(trigger)
-        for trigger in baseline_binding.get("Triggers", [])
-        if trigger.get("B_KB") is False
-    ]
-
-    existing_bindings[index].setdefault(
-        "Triggers",
-        []
-    ).extend(additions)
-
-
-def without_controller_triggers(obj):
-    obj = copy.deepcopy(obj)
-    input_cfg = obj["BigPEmuConfig"]["Input"]
+def without_controller_triggers(cfg):
+    result = copy.deepcopy(cfg)
+    input_cfg = result["BigPEmuConfig"]["Input"]
 
     for key, device in input_cfg.items():
 
@@ -5408,23 +5381,44 @@ def without_controller_triggers(obj):
                 if trigger.get("B_KB") is not False
             ]
 
-    return obj
+    return result
 
 
-if without_controller_triggers(before) != without_controller_triggers(existing):
+existing_controller = controller_entries(existing)
+
+# No controller-specific bindings means this configuration is already
+# portable or intentionally keyboard-only. Preserve it exactly.
+if not existing_controller:
+    print("PRESERVE")
+    raise SystemExit(0)
+
+
+# Any controller mapping other than BareFront's exact historical mapping
+# may belong to the user. Preserve it untouched.
+if controller_signature(existing) != OLD_CONTROLLER_SIGNATURE:
+    print("PRESERVE")
+    raise SystemExit(0)
+
+
+before = copy.deepcopy(existing)
+migrated = without_controller_triggers(existing)
+
+
+if controller_entries(migrated):
+    raise SystemExit(
+        "BigPEmu legacy controller triggers remain after migration"
+    )
+
+
+# Removing the known controller triggers must be the only change.
+if without_controller_triggers(before) != migrated:
     raise SystemExit(
         "BigPEmu migration changed unrelated configuration"
     )
 
 
-if len(controller_triggers(existing_input)) != 32:
-    raise SystemExit(
-        "Unexpected BigPEmu controller trigger count after migration"
-    )
-
-
 with open(output_path, "w", encoding="utf-8") as f:
-    json.dump(existing, f, indent=4)
+    json.dump(migrated, f, indent=4)
     f.write("\n")
 
 
@@ -5434,7 +5428,7 @@ PY_MIGRATE_BIGPEMU
     then
 
         rm -f -- "$BIGPEMU_CONFIG_TEMP"
-        die "BigPEmu controller migration failed."
+        die "BigPEmu input migration failed."
 
     fi
 
@@ -5446,7 +5440,7 @@ PY_MIGRATE_BIGPEMU
             rm -f -- "$BIGPEMU_CONFIG_TEMP"
 
             echo \
-                "  BigPEmu controller mapping already exists: PRESERVED"
+                "  BigPEmu input configuration: PRESERVED"
             ;;
 
 
@@ -5466,24 +5460,11 @@ PY_MIGRATE_BIGPEMU
             then
                 rm -f -- "$BIGPEMU_CONFIG_TEMP"
                 die \
-                    "Could not migrate the BigPEmu controller mapping."
+                    "Could not migrate the BigPEmu input configuration."
             fi
 
             echo \
-                "  BigPEmu Xbox controller baseline: MIGRATED"
-            ;;
-
-
-        INCOMPATIBLE)
-
-            rm -f -- "$BIGPEMU_CONFIG_TEMP"
-
-            echo \
-                "  WARNING: existing BigPEmu input layout is not"
-            echo \
-                "           compatible with BareFront's baseline."
-            echo \
-                "           Existing configuration: PRESERVED"
+                "  BigPEmu legacy controller mapping: MIGRATED"
             ;;
 
 
@@ -5492,7 +5473,7 @@ PY_MIGRATE_BIGPEMU
             rm -f -- "$BIGPEMU_CONFIG_TEMP"
 
             die \
-                "Unexpected BigPEmu controller migration result."
+                "Unexpected BigPEmu input migration result."
             ;;
 
     esac
@@ -5574,7 +5555,7 @@ fi
 
 if ! command -v g++ >/dev/null 2>&1 ||
    ! command -v pkg-config >/dev/null 2>&1 ||
-   ! pkg-config --exists sdl2
+   ! pkg-config --exists sdl2 x11 xtst
 then
     die "BigPEmu Share helper build dependencies are missing."
 fi
@@ -5590,7 +5571,7 @@ then
     if ! g++ -std=c++17 -O2 -Wall -Wextra \
         "$BIGPEMU_GUIDE_SOURCE" \
         -o "$BIGPEMU_GUIDE_TEMP" \
-        $(pkg-config --cflags --libs sdl2)
+        $(pkg-config --cflags --libs sdl2 x11 xtst)
     then
         rm -f -- "$BIGPEMU_GUIDE_TEMP"
         die "BigPEmu Share helper compilation failed."
@@ -6257,10 +6238,30 @@ def ensure(section, key, value):
     lines.insert(section_end, f"  {key}: {value}")
 
 
-def seed_xbox_gamepad():
+def seed_barefront_gamepad():
     global lines
 
+    # Portable bsnes v115 keyboard bindings proven on BareFront.
+    # The SDL controller helper translates normalized controller
+    # input to these keys, avoiding host-specific joypad IDs.
     mapping = {
+        "Up":     "0x1/0/84",
+        "Down":   "0x1/0/85",
+        "Left":   "0x1/0/86",
+        "Right":  "0x1/0/87",
+        "B":      "0x1/0/60",
+        "A":      "0x1/0/58",
+        "Y":      "0x1/0/35",
+        "X":      "0x1/0/53",
+        "L":      "0x1/0/51",
+        "R":      "0x1/0/57",
+        "Select": "0x1/0/88",
+        "Start":  "0x1/0/89",
+    }
+
+    # Previous BareFront baseline. These values contain the
+    # host-specific bsnes joypad identity and are safe to migrate.
+    legacy_mapping = {
         "Up":     "0x45e0b12/1/1/Lo",
         "Down":   "0x45e0b12/1/1/Hi",
         "Left":   "0x45e0b12/1/0/Lo",
@@ -6286,11 +6287,8 @@ def seed_xbox_gamepad():
 
         return result
 
-    # --------------------------------------------------------
-    # Fresh configuration:
-    # create the Super Famicom / Port 1 structure ourselves.
-    # --------------------------------------------------------
-
+    # Fresh configuration: create the native structure and
+    # BareFront portable keyboard baseline.
     try:
         system_index = lines.index("SuperFamicom")
     except ValueError:
@@ -6301,7 +6299,6 @@ def seed_xbox_gamepad():
         lines.extend(mapped_gamepad_lines())
         return
 
-    # Find the end of the SuperFamicom top-level section.
     system_end = len(lines)
 
     for i in range(system_index + 1, len(lines)):
@@ -6311,11 +6308,7 @@ def seed_xbox_gamepad():
             system_end = i
             break
 
-    # --------------------------------------------------------
-    # Existing SuperFamicom section but no Port 1:
-    # treat it as unconfigured and add our baseline.
-    # --------------------------------------------------------
-
+    # Existing SuperFamicom section but no Port 1.
     port_index = None
 
     for i in range(system_index + 1, system_end):
@@ -6327,7 +6320,6 @@ def seed_xbox_gamepad():
         lines[system_end:system_end] = mapped_gamepad_lines()
         return
 
-    # Find the end of ControllerPort1.
     port_end = system_end
 
     for i in range(port_index + 1, system_end):
@@ -6342,11 +6334,7 @@ def seed_xbox_gamepad():
             port_end = i
             break
 
-    # --------------------------------------------------------
-    # Existing Port 1 but no Gamepad subsection:
-    # also treat this as unconfigured.
-    # --------------------------------------------------------
-
+    # Existing Port 1 but no Gamepad subsection.
     gamepad_index = None
 
     for i in range(port_index + 1, port_end):
@@ -6363,7 +6351,6 @@ def seed_xbox_gamepad():
         lines[port_end:port_end] = block
         return
 
-    # Find the end of the Gamepad subsection.
     gamepad_end = port_end
 
     for i in range(gamepad_index + 1, port_end):
@@ -6398,24 +6385,30 @@ def seed_xbox_gamepad():
         if key in mapping:
             control_lines[key] = (i, value)
 
-    # An unexpected or incomplete native layout is left alone.
+    # Unexpected/incomplete layouts may be user-created.
     if set(control_lines) != set(mapping):
         return
 
-    # Existing mappings belong to the user/emulator.
-    # If even one normal gameplay control is assigned,
-    # preserve the complete Port 1 mapping unchanged.
-    if any(value for _, value in control_lines.values()):
-        return
+    # Only values BareFront itself knows are safe to migrate:
+    # empty, previous host-specific baseline, or current portable baseline.
+    for key, (_, value) in control_lines.items():
+        known_values = {
+            "",
+            legacy_mapping[key],
+            mapping[key],
+        }
 
-    # Complete native gamepad exists and all normal controls
-    # are unassigned: seed BareFront's Xbox-layout baseline.
+        if value not in known_values:
+            return
+
+    # Complete known BareFront/empty mapping: normalize all controls
+    # to the current portable keyboard baseline.
     for key, value in mapping.items():
         i, _ = control_lines[key]
         lines[i] = f"      {key}: {value}"
 
 
-seed_xbox_gamepad()
+seed_barefront_gamepad()
 
 
 ensure("Path", "Saves", f"{save_dir}/")
@@ -7030,14 +7023,6 @@ if [[ ! -x "$MEDNAFEN_PCE_LAUNCHER" ]]; then
     die "PC Engine launcher is not executable."
 fi
 
-if ! command -v pactl >/dev/null 2>&1; then
-    die "PC Engine direct-HDMI audio requires pactl."
-fi
-
-if ! command -v pasuspender >/dev/null 2>&1; then
-    die "PC Engine direct-HDMI audio requires pasuspender."
-fi
-
 if ! command -v xrandr >/dev/null 2>&1; then
     die "PC Engine presentation requires xrandr."
 fi
@@ -7214,10 +7199,12 @@ print("  Esc exit binding: OK")
 PYMEDNAFEN
 
 # ------------------------------------------------------------
-# PC Engine Xbox Series controller baseline
+# PC Engine portable controller baseline
 #
-# Upgrade only the known keyboard-only/default mapping.
-# Preserve an existing custom controller configuration.
+# Gameplay is driven through the BareFront SDL controller helper,
+# which translates normalized controller buttons to these keyboard
+# bindings.  Migrate only BareFront's known legacy hard-coded Xbox
+# mapping; preserve genuinely custom controller configurations.
 # ------------------------------------------------------------
 
 MEDNAFEN_PCE_CONFIG_PATH="$MEDNAFEN_PCE_CONFIG" python3 - <<'PYMEDNAFEN_PCE_PAD'
@@ -7228,25 +7215,25 @@ path = Path(os.environ["MEDNAFEN_PCE_CONFIG_PATH"])
 original = path.read_text()
 lines = original.splitlines()
 
-joy = "0x0006045e0b1205010008000b00000000"
+legacy_joy = "0x0006045e0b1205010008000b00000000"
 
-xbox = {
+legacy_xbox = {
     "pce_fast.input.port1.gamepad.up":
-        f"joystick {joy} abs_7-",
+        f"joystick {legacy_joy} abs_7-",
     "pce_fast.input.port1.gamepad.down":
-        f"joystick {joy} abs_7+",
+        f"joystick {legacy_joy} abs_7+",
     "pce_fast.input.port1.gamepad.left":
-        f"joystick {joy} abs_6-",
+        f"joystick {legacy_joy} abs_6-",
     "pce_fast.input.port1.gamepad.right":
-        f"joystick {joy} abs_6+",
+        f"joystick {legacy_joy} abs_6+",
     "pce_fast.input.port1.gamepad.i":
-        f"joystick {joy} button_0",
+        f"joystick {legacy_joy} button_0",
     "pce_fast.input.port1.gamepad.ii":
-        f"joystick {joy} button_1",
+        f"joystick {legacy_joy} button_1",
     "pce_fast.input.port1.gamepad.run":
-        f"joystick {joy} button_7",
+        f"joystick {legacy_joy} button_7",
     "pce_fast.input.port1.gamepad.select":
-        f"joystick {joy} button_6",
+        f"joystick {legacy_joy} button_6",
 }
 
 keyboard = {
@@ -7270,19 +7257,23 @@ for line in lines:
 
 current = {
     key: resolved.get(key, "")
-    for key in xbox
+    for key in keyboard
 }
 
-if current == xbox:
-    print("  Xbox controller mapping: CURRENT")
+if current == keyboard:
+    print("  Portable controller mapping: CURRENT")
 
 else:
-    safe_to_upgrade = all(
-        current[key] in ("", keyboard[key])
-        for key in xbox
+    safe_to_migrate = all(
+        current[key] in (
+            "",
+            keyboard[key],
+            legacy_xbox[key],
+        )
+        for key in keyboard
     )
 
-    if safe_to_upgrade:
+    if safe_to_migrate:
         seen = set()
 
         for index, line in enumerate(lines):
@@ -7293,23 +7284,21 @@ else:
 
             key = parts[0]
 
-            if key in xbox:
-                lines[index] = f"{key} {xbox[key]}"
+            if key in keyboard:
+                lines[index] = f"{key} {keyboard[key]}"
                 seen.add(key)
 
-        for key, value in xbox.items():
+        for key, value in keyboard.items():
             if key not in seen:
                 lines.append(f"{key} {value}")
 
         path.write_text("\n".join(lines) + "\n")
 
-        print("  Xbox controller mapping: UPGRADED")
+        print("  Portable controller mapping: MIGRATED")
 
     else:
-        print("  Xbox controller mapping: PRESERVE CUSTOM")
+        print("  Portable controller mapping: PRESERVE CUSTOM")
 
-# Required gameplay controls must remain populated whether the
-# profile was upgraded, already current, or intentionally custom.
 resolved = {}
 
 for line in path.read_text().splitlines():
@@ -7318,7 +7307,7 @@ for line in path.read_text().splitlines():
     if len(parts) == 2:
         resolved[parts[0]] = parts[1].strip()
 
-for key in xbox:
+for key in keyboard:
     if not resolved.get(key):
         raise SystemExit(
             f"Empty PC Engine controller binding after migration: {key}"
@@ -7385,14 +7374,6 @@ fi
 
 if [[ ! -x "$MEDNAFEN_SATURN_GAMESCOPE" ]]; then
     die "Gamescope executable not found: $MEDNAFEN_SATURN_GAMESCOPE"
-fi
-
-if ! command -v pactl >/dev/null 2>&1; then
-    die "Saturn direct-HDMI audio requires pactl."
-fi
-
-if ! command -v pasuspender >/dev/null 2>&1; then
-    die "pasuspender is required for Saturn direct ALSA audio."
 fi
 
 if [[ ! -f "$MEDNAFEN_SATURN_LAUNCHER" ]]; then
@@ -7572,10 +7553,13 @@ print("  Esc exit binding: OK")
 PYMEDNAFEN_SATURN
 
 # ------------------------------------------------------------
-# Saturn Xbox Series controller baseline
+# Saturn portable controller baseline
 #
-# Upgrade only known keyboard-only/default mappings.
-# Preserve any existing custom controller configuration.
+# Gameplay is driven through the BareFront SDL controller helper,
+# which translates normalized controller inputs to these keyboard
+# bindings. Migrate only known Mednafen defaults, older BareFront
+# defaults, and BareFront's legacy hard-coded Xbox mapping.
+# Preserve genuinely custom controller configurations.
 # ------------------------------------------------------------
 
 MEDNAFEN_SATURN_CONFIG_PATH="$MEDNAFEN_SATURN_CONFIG" python3 - <<'PYMEDNAFEN_SATURN_PAD'
@@ -7586,37 +7570,37 @@ path = Path(os.environ["MEDNAFEN_SATURN_CONFIG_PATH"])
 original = path.read_text()
 lines = original.splitlines()
 
-xbox = {
+legacy_joy = "0x0006045e0b1205010008000b00000000"
+
+legacy_xbox = {
     "ss.input.port1.gamepad.a":
-        "joystick 0x0006045e0b1205010008000b00000000 button_2",
+        f"joystick {legacy_joy} button_2",
     "ss.input.port1.gamepad.b":
-        "joystick 0x0006045e0b1205010008000b00000000 button_0",
+        f"joystick {legacy_joy} button_0",
     "ss.input.port1.gamepad.c":
-        "joystick 0x0006045e0b1205010008000b00000000 button_1",
+        f"joystick {legacy_joy} button_1",
     "ss.input.port1.gamepad.down":
-        "joystick 0x0006045e0b1205010008000b00000000 abs_7+",
+        f"joystick {legacy_joy} abs_7+",
     "ss.input.port1.gamepad.left":
-        "joystick 0x0006045e0b1205010008000b00000000 abs_6-",
+        f"joystick {legacy_joy} abs_6-",
     "ss.input.port1.gamepad.ls":
-        "joystick 0x0006045e0b1205010008000b00000000 abs_2-+",
+        f"joystick {legacy_joy} abs_2-+",
     "ss.input.port1.gamepad.right":
-        "joystick 0x0006045e0b1205010008000b00000000 abs_6+",
+        f"joystick {legacy_joy} abs_6+",
     "ss.input.port1.gamepad.rs":
-        "joystick 0x0006045e0b1205010008000b00000000 abs_5-+",
+        f"joystick {legacy_joy} abs_5-+",
     "ss.input.port1.gamepad.start":
-        "joystick 0x0006045e0b1205010008000b00000000 button_7",
+        f"joystick {legacy_joy} button_7",
     "ss.input.port1.gamepad.up":
-        "joystick 0x0006045e0b1205010008000b00000000 abs_7-",
+        f"joystick {legacy_joy} abs_7-",
     "ss.input.port1.gamepad.x":
-        "joystick 0x0006045e0b1205010008000b00000000 button_3",
+        f"joystick {legacy_joy} button_3",
     "ss.input.port1.gamepad.y":
-        "joystick 0x0006045e0b1205010008000b00000000 button_4",
+        f"joystick {legacy_joy} button_4",
     "ss.input.port1.gamepad.z":
-        "joystick 0x0006045e0b1205010008000b00000000 button_5",
+        f"joystick {legacy_joy} button_5",
 }
 
-# Mednafen 1.32.1 generated keyboard-only defaults observed
-# on a fresh isolated Saturn profile.
 mednafen_keyboard = {
     "ss.input.port1.gamepad.a": "keyboard 0x0 89",
     "ss.input.port1.gamepad.b": "keyboard 0x0 90",
@@ -7633,9 +7617,7 @@ mednafen_keyboard = {
     "ss.input.port1.gamepad.z": "keyboard 0x0 94",
 }
 
-# Older BareFront fallback keyboard values. These may exist on
-# profiles created by an earlier installer revision.
-barefront_keyboard = {
+keyboard = {
     "ss.input.port1.gamepad.up": "keyboard 0x0 82",
     "ss.input.port1.gamepad.down": "keyboard 0x0 81",
     "ss.input.port1.gamepad.left": "keyboard 0x0 80",
@@ -7661,23 +7643,24 @@ for line in lines:
 
 current = {
     key: resolved.get(key, "")
-    for key in xbox
+    for key in keyboard
 }
 
-if current == xbox:
-    print("  Xbox controller mapping: CURRENT")
+if current == keyboard:
+    print("  Portable controller mapping: CURRENT")
 
 else:
-    safe_to_upgrade = all(
+    safe_to_migrate = all(
         current[key] in (
             "",
+            keyboard[key],
             mednafen_keyboard[key],
-            barefront_keyboard[key],
+            legacy_xbox[key],
         )
-        for key in xbox
+        for key in keyboard
     )
 
-    if safe_to_upgrade:
+    if safe_to_migrate:
         seen = set()
 
         for index, line in enumerate(lines):
@@ -7688,24 +7671,21 @@ else:
 
             key = parts[0]
 
-            if key in xbox:
-                lines[index] = f"{key} {xbox[key]}"
+            if key in keyboard:
+                lines[index] = f"{key} {keyboard[key]}"
                 seen.add(key)
 
-        for key, value in xbox.items():
+        for key, value in keyboard.items():
             if key not in seen:
                 lines.append(f"{key} {value}")
 
-        updated = "\n".join(lines) + "\n"
-        path.write_text(updated)
+        path.write_text("\n".join(lines) + "\n")
 
-        print("  Xbox controller mapping: UPGRADED")
+        print("  Portable controller mapping: MIGRATED")
 
     else:
-        print("  Xbox controller mapping: PRESERVE CUSTOM")
+        print("  Portable controller mapping: PRESERVE CUSTOM")
 
-# Final integrity check. Custom mappings are allowed, but no
-# required Saturn gamepad binding may be empty.
 resolved = {}
 
 for line in path.read_text().splitlines():
@@ -7714,7 +7694,7 @@ for line in path.read_text().splitlines():
     if len(parts) == 2:
         resolved[parts[0]] = parts[1].strip()
 
-for key in xbox:
+for key in keyboard:
     if not resolved.get(key):
         raise SystemExit(
             f"Empty Saturn controller binding after migration: {key}"

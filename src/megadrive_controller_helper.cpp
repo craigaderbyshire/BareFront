@@ -80,6 +80,71 @@ bool sendEscape()
     return true;
 }
 
+KeySym gameplayKeyForButton(Uint8 button)
+{
+    switch (button)
+    {
+        case SDL_CONTROLLER_BUTTON_DPAD_UP:
+            return XK_w;
+
+        case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+            return XK_s;
+
+        case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+            return XK_a;
+
+        case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+            return XK_d;
+
+        case SDL_CONTROLLER_BUTTON_X:
+            return XK_KP_1;
+
+        case SDL_CONTROLLER_BUTTON_A:
+            return XK_KP_2;
+
+        case SDL_CONTROLLER_BUTTON_B:
+            return XK_KP_3;
+
+        case SDL_CONTROLLER_BUTTON_START:
+            return XK_Return;
+
+        default:
+            return NoSymbol;
+    }
+}
+
+bool sendGameplayKey(KeySym symbol, bool pressed)
+{
+    Display* display = XOpenDisplay(nullptr);
+
+    if (!display)
+    {
+        std::cerr << "Cannot open Mega Drive control display\n";
+        return false;
+    }
+
+    const KeyCode key =
+        XKeysymToKeycode(display, symbol);
+
+    if (!key)
+    {
+        XCloseDisplay(display);
+        return false;
+    }
+
+    XTestFakeKeyEvent(
+        display,
+        key,
+        pressed ? True : False,
+        CurrentTime
+    );
+
+    XSync(display, False);
+    XCloseDisplay(display);
+
+    return true;
+}
+
 }
 
 int main()
@@ -181,6 +246,19 @@ int main()
                         guideFired.erase(id);
                     }
                 }
+
+                const KeySym gameplayKey =
+                    gameplayKeyForButton(
+                        event.cbutton.button
+                    );
+
+                if (gameplayKey != NoSymbol)
+                {
+                    sendGameplayKey(
+                        gameplayKey,
+                        true
+                    );
+                }
             }
 
             if (event.type == SDL_CONTROLLERBUTTONUP)
@@ -193,6 +271,19 @@ int main()
                 {
                     guideStarted.erase(id);
                     guideFired.erase(id);
+                }
+
+                const KeySym gameplayKey =
+                    gameplayKeyForButton(
+                        event.cbutton.button
+                    );
+
+                if (gameplayKey != NoSymbol)
+                {
+                    sendGameplayKey(
+                        gameplayKey,
+                        false
+                    );
                 }
             }
 

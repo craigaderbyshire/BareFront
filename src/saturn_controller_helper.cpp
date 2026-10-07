@@ -87,6 +87,98 @@ bool sendKey(KeySym symbol, const char* description)
     return true;
 }
 
+KeySym gameplayKeyForButton(Uint8 button)
+{
+    switch (button)
+    {
+        case SDL_CONTROLLER_BUTTON_DPAD_UP:
+            return XK_Up;
+
+        case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+            return XK_Down;
+
+        case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+            return XK_Left;
+
+        case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+            return XK_Right;
+
+        // Existing BareFront Saturn layout:
+        // Xbox X -> Saturn A
+        // Xbox A -> Saturn B
+        // Xbox B -> Saturn C
+        // Xbox Y -> Saturn X
+        // LB     -> Saturn Y
+        // RB     -> Saturn Z
+        case SDL_CONTROLLER_BUTTON_X:
+            return XK_z;
+
+        case SDL_CONTROLLER_BUTTON_A:
+            return XK_x;
+
+        case SDL_CONTROLLER_BUTTON_B:
+            return XK_c;
+
+        case SDL_CONTROLLER_BUTTON_Y:
+            return XK_a;
+
+        case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+            return XK_s;
+
+        case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+            return XK_d;
+
+        case SDL_CONTROLLER_BUTTON_START:
+            return XK_Return;
+
+        default:
+            return NoSymbol;
+    }
+}
+
+bool sendGameplayKey(KeySym symbol, bool pressed)
+{
+    Display* display = XOpenDisplay(nullptr);
+
+    if (!display)
+    {
+        std::cerr << "Cannot open Saturn control display\n";
+        return false;
+    }
+
+    Window focused = None;
+    int revert = 0;
+
+    XGetInputFocus(display, &focused, &revert);
+
+    if (focused == None || focused == PointerRoot)
+    {
+        XCloseDisplay(display);
+        return false;
+    }
+
+    const KeyCode key =
+        XKeysymToKeycode(display, symbol);
+
+    if (!key)
+    {
+        XCloseDisplay(display);
+        return false;
+    }
+
+    XTestFakeKeyEvent(
+        display,
+        key,
+        pressed ? True : False,
+        CurrentTime
+    );
+
+    XSync(display, False);
+    XCloseDisplay(display);
+
+    return true;
+}
+
 void nextDisc()
 {
     std::cout
@@ -171,6 +263,8 @@ int main()
     std::map<SDL_JoystickID, Uint64> guideStarted;
     std::set<SDL_JoystickID> guideFired;
     std::set<SDL_JoystickID> yHeld;
+    std::set<SDL_JoystickID> leftTriggerHeld;
+    std::set<SDL_JoystickID> rightTriggerHeld;
 
     Uint64 lastDiscAction = 0;
     bool hadDiscAction = false;
@@ -215,6 +309,19 @@ int main()
 
                         guideFired.erase(id);
                     }
+                }
+
+                const KeySym gameplayKey =
+                    gameplayKeyForButton(
+                        event.cbutton.button
+                    );
+
+                if (gameplayKey != NoSymbol)
+                {
+                    sendGameplayKey(
+                        gameplayKey,
+                        true
+                    );
                 }
 
                 if (event.cbutton.button ==
@@ -281,6 +388,72 @@ int main()
                 {
                     yHeld.erase(id);
                 }
+
+                const KeySym gameplayKey =
+                    gameplayKeyForButton(
+                        event.cbutton.button
+                    );
+
+                if (gameplayKey != NoSymbol)
+                {
+                    sendGameplayKey(
+                        gameplayKey,
+                        false
+                    );
+                }
+            }
+
+            if (event.type ==
+                SDL_CONTROLLERAXISMOTION)
+            {
+                const SDL_JoystickID id =
+                    event.caxis.which;
+
+                constexpr Sint16 TRIGGER_THRESHOLD = 16000;
+
+                if (event.caxis.axis ==
+                    SDL_CONTROLLER_AXIS_TRIGGERLEFT)
+                {
+                    const bool pressed =
+                        event.caxis.value >
+                        TRIGGER_THRESHOLD;
+
+                    const bool wasPressed =
+                        leftTriggerHeld.count(id);
+
+                    if (pressed && !wasPressed)
+                    {
+                        leftTriggerHeld.insert(id);
+                        sendGameplayKey(XK_q, true);
+                    }
+                    else if (!pressed && wasPressed)
+                    {
+                        leftTriggerHeld.erase(id);
+                        sendGameplayKey(XK_q, false);
+                    }
+                }
+
+                if (event.caxis.axis ==
+                    SDL_CONTROLLER_AXIS_TRIGGERRIGHT)
+                {
+                    const bool pressed =
+                        event.caxis.value >
+                        TRIGGER_THRESHOLD;
+
+                    const bool wasPressed =
+                        rightTriggerHeld.count(id);
+
+                    if (pressed && !wasPressed)
+                    {
+                        rightTriggerHeld.insert(id);
+                        sendGameplayKey(XK_e, true);
+                    }
+                    else if (!pressed && wasPressed)
+                    {
+                        rightTriggerHeld.erase(id);
+                        sendGameplayKey(XK_e, false);
+                    }
+                }
             }
 
             if (event.type ==
@@ -295,6 +468,14 @@ int main()
                 );
 
                 yHeld.erase(
+                    event.cdevice.which
+                );
+
+                leftTriggerHeld.erase(
+                    event.cdevice.which
+                );
+
+                rightTriggerHeld.erase(
                     event.cdevice.which
                 );
             }

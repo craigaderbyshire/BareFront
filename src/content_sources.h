@@ -33,6 +33,9 @@ struct Source
 inline bool validSource(
     const fs::path& root)
 {
+    if (root.empty())
+        return false;
+
     std::error_code error;
 
     const bool romsValid =
