@@ -159,3 +159,11 @@ BareFront fronts.
 Emulators emulate.
 
 Gamescope presents.
+
+## Licence
+
+BareFront original source code and documentation are licensed under the **GNU General Public License v3.0 or later (GPL-3.0-or-later)**.
+
+See `LICENSE` for the full licence text.
+
+Third-party components and bundled assets retain their own licences and attribution. Where applicable, those licences are included alongside the relevant files.
