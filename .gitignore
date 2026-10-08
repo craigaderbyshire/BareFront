@@ -3,12 +3,15 @@
 # Emulator binaries / downloaded applications
 emulators/
 
-# Copyrighted/user-supplied firmware
-bios/
+# Copyrighted/user-supplied firmware / runtime content links
+/bios
 
-# User ROM libraries
-roms/
+# User ROM libraries / runtime content links
+/roms
 testroms/
+
+# Installer-managed content source plumbing
+/content/
 
 # User save data
 saves/
