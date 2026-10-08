@@ -138,9 +138,19 @@ BareFront can also use an optional SMB/CIFS network share for game content.
 
 BareFront currently supports Debian 13 (Trixie) on amd64/x86-64 systems.
 
-The installer must be run as a normal user, not as root. It will request `sudo` access for the parts of the installation that require it.
+Install it from a normal user account. Do **not** run the whole installer with `sudo`; it will request `sudo` access itself when required.
 
-Public-beta installation instructions will be added before release.
+```bash
+git clone --branch installer-v0.12 --single-branch https://github.com/craigaderbyshire/BareFront.git
+cd BareFront
+./scripts/install_barefront.sh
+```
+
+The installer installs and configures BareFront's supported emulators, presentation runtime and required dependencies.
+
+It will also offer optional SMB/CIFS network-share setup for game content.
+
+When installation is complete, BareFront is available from the desktop application menu.
 
 ## Configuration
 
