@@ -138,7 +138,14 @@ for (( ATTEMPT=0; ATTEMPT < 50; ++ATTEMPT )); do
     if [[ -n "$OUTPUT_PORT" &&
           -n "$INPUT_PORT" ]]
     then
-        if pw-link "$OUTPUT_PORT" "$INPUT_PORT"; then
+        LINK_RESULT=""
+
+        if LINK_RESULT="$(LC_ALL=C pw-link "$OUTPUT_PORT" "$INPUT_PORT" 2>&1)"; then
+            LINKED=true
+            break
+        fi
+
+        if [[ "$LINK_RESULT" == *"File exists"* ]]; then
             LINKED=true
             break
         fi

@@ -32,8 +32,8 @@ namespace fs = std::filesystem;
 //   R = five-second recording
 //
 // Controller:
-//   Select + Left  = picture
-//   Select + Right = five-second recording
+//   VIEW + Left  = picture
+//   VIEW + Right = five-second recording
 //
 // The helper captures the currently active X11 window,
 // detects solid black presentation bars around the game,
@@ -1371,8 +1371,20 @@ int main(
     );
 
 
-    bool selectHeld =
+    Uint32 pictureChordStarted =
+        0;
+
+    Uint32 recordChordStarted =
+        0;
+
+    bool pictureChordTriggered =
         false;
+
+    bool recordChordTriggered =
+        false;
+
+    const Uint32 captureChordHoldMs =
+        250;
 
     pid_t recordingPid =
         -1;
@@ -1454,7 +1466,7 @@ int main(
     std::cout
         << "BareFront capture ready: "
         << "P=picture, R=record, "
-        << "Select+Left=picture, Select+Right=record "
+        << "VIEW+Left=picture, VIEW+Right=record "
         << "(max "
         << maxWidth
         << "x"
@@ -1711,38 +1723,117 @@ int main(
                     }
                 }
             }
-            else if (event.type ==
-                     SDL_CONTROLLERBUTTONDOWN)
+        }
+
+
+        // Poll live controller state rather than relying on
+        // button event ordering. Either half of the chord may
+        // be pressed first.
+        bool pictureChordHeld =
+            false;
+
+        bool recordChordHeld =
+            false;
+
+
+        for (SDL_GameController* controller :
+             controllers)
+        {
+            if (!controller ||
+                !SDL_GameControllerGetAttached(
+                    controller))
             {
-                if (event.cbutton.button ==
-                    SDL_CONTROLLER_BUTTON_BACK)
-                {
-                    selectHeld =
-                        true;
-                }
-                else if (
-                    selectHeld &&
-                    event.cbutton.button ==
-                        SDL_CONTROLLER_BUTTON_DPAD_LEFT)
-                {
-                    picture();
-                }
-                else if (
-                    selectHeld &&
-                    event.cbutton.button ==
-                        SDL_CONTROLLER_BUTTON_DPAD_RIGHT)
-                {
-                    record();
-                }
+                continue;
             }
-            else if (event.type ==
-                     SDL_CONTROLLERBUTTONUP &&
-                     event.cbutton.button ==
-                        SDL_CONTROLLER_BUTTON_BACK)
+
+
+            const bool viewHeld =
+                SDL_GameControllerGetButton(
+                    controller,
+                    SDL_CONTROLLER_BUTTON_BACK
+                ) != 0;
+
+
+            if (viewHeld &&
+                SDL_GameControllerGetButton(
+                    controller,
+                    SDL_CONTROLLER_BUTTON_DPAD_LEFT
+                ))
             {
-                selectHeld =
-                    false;
+                pictureChordHeld =
+                    true;
             }
+
+
+            if (viewHeld &&
+                SDL_GameControllerGetButton(
+                    controller,
+                    SDL_CONTROLLER_BUTTON_DPAD_RIGHT
+                ))
+            {
+                recordChordHeld =
+                    true;
+            }
+        }
+
+
+        Uint32 chordNow =
+            SDL_GetTicks();
+
+
+        if (pictureChordHeld)
+        {
+            if (pictureChordStarted == 0)
+            {
+                pictureChordStarted =
+                    chordNow;
+            }
+
+            if (!pictureChordTriggered &&
+                chordNow - pictureChordStarted >=
+                    captureChordHoldMs)
+            {
+                picture();
+
+                pictureChordTriggered =
+                    true;
+            }
+        }
+        else
+        {
+            pictureChordStarted =
+                0;
+
+            pictureChordTriggered =
+                false;
+        }
+
+
+        if (recordChordHeld)
+        {
+            if (recordChordStarted == 0)
+            {
+                recordChordStarted =
+                    chordNow;
+            }
+
+            if (!recordChordTriggered &&
+                chordNow - recordChordStarted >=
+                    captureChordHoldMs)
+            {
+                record();
+
+                recordChordTriggered =
+                    true;
+            }
+        }
+        else
+        {
+            recordChordStarted =
+                0;
+
+            recordChordTriggered =
+                false;
         }
 
 
