@@ -8,7 +8,7 @@ It is designed for a dedicated 1080p retro-gaming machine running Debian 13.
 
 ## Status
 
-BareFront is currently preparing for public beta.
+BareFront is currently in public beta.
 
 Supported platform:
 
@@ -141,7 +141,7 @@ BareFront currently supports Debian 13 (Trixie) on amd64/x86-64 systems.
 Install it from a normal user account. Do **not** run the whole installer with `sudo`; it will request `sudo` access itself when required.
 
 ```bash
-git clone --branch installer-v0.12 --single-branch https://github.com/craigaderbyshire/BareFront.git
+git clone https://github.com/craigaderbyshire/BareFront.git
 cd BareFront
 ./scripts/install_barefront.sh
 ```
