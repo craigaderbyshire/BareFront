@@ -128,11 +128,11 @@ echo "Operating system:"
 echo "  ${PRETTY_NAME:-Unknown}"
 
 if [[ "${ID:-}" != "debian" ]]; then
-    die "BareFront v1.0 currently supports Debian only."
+    die "BareFront currently supports Debian only."
 fi
 
 if [[ "${VERSION_ID:-}" != "13" ]]; then
-    die "BareFront v1.0 currently supports Debian 13 (Trixie)."
+    die "BareFront currently supports Debian 13 (Trixie)."
 fi
 
 echo "  Debian 13 check: OK"
@@ -144,7 +144,7 @@ echo "Architecture:"
 echo "  $ARCH"
 
 if [[ "$ARCH" != "amd64" ]]; then
-    die "BareFront v1.0 currently supports amd64/x86-64 only."
+    die "BareFront currently supports amd64/x86-64 only."
 fi
 
 echo "  Architecture check: OK"
