@@ -2054,6 +2054,7 @@ with config.open("r", encoding="utf-8-sig") as f:
 
 preferences = data.setdefault("Preferences", {})
 preferences["AutoHideMenu"] = True
+preferences["DisableOsd"] = True
 shortcuts = preferences.setdefault("ShortcutKeys", [])
 
 def set_shortcut(name, key1):
@@ -2176,6 +2177,7 @@ data = {
     "Preferences": {
         "AutomaticallyCheckForUpdates": False,
         "AutoHideMenu": True,
+        "DisableOsd": True,
 
         "OverrideSaveDataFolder": True,
         "SaveDataFolder": save_dir,
