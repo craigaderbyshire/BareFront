@@ -11131,10 +11131,10 @@ echo "BareFront desktop integration complete."
 
 
 # ============================================================
-# v0.12 checkpoint
+# v0.12 installation complete
 # ============================================================
 
-heading "INSTALLER v0.12 CHECKPOINT"
+heading "BAREFRONT v0.12 INSTALLATION COMPLETE"
 
 echo "Completed:"
 echo "  Pre-flight checks"
@@ -11164,9 +11164,6 @@ echo "Stage 3 emulator installation is complete."
 echo "Stage 4 production configuration generation is complete."
 echo "Stage 5A firmware readiness checking is complete."
 echo "Stage 5B verified firmware recognition is complete."
-echo
-echo "Next:"
-echo "  Complete fresh-install validation of BareFront v0.12."
 echo
 echo "Installer log:"
 echo "  $LOG_FILE"
